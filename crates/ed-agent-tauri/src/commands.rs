@@ -1,6 +1,6 @@
 //! The commands a webview invokes.
 
-use onde_ed::{ChatMessage, ChatReply, Ed, EngineInfo};
+use ed_agent::{ChatMessage, ChatReply, Ed, EngineInfo};
 use tauri::State;
 
 use crate::sink::TauriSink;

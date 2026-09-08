@@ -1,7 +1,7 @@
 //! Bridges Ed's notifications onto Tauri's event bus.
 
+use ed_agent::{ChatReply, EngineStatus, StatusSink};
 use log::warn;
-use onde_ed::{ChatReply, EngineStatus, StatusSink};
 use tauri::{AppHandle, Emitter};
 
 use crate::events::{ChatStatusPayload, EVENT_CHAT_REPLY, EVENT_CHAT_STATUS_CHANGED};

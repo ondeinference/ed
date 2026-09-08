@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/onde-ed", "crates/onde-ed-tauri"]
+members = ["crates/ed-agent", "crates/ed-agent-tauri"]
 
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
@@ -10,7 +10,7 @@ edition = "2021"
 rust-version = "1.82"
 license = "Apache-2.0"
 authors = ["Splitfire AB"]
-repository = "https://github.com/ondeinference/onde-ed"
+repository = "https://github.com/ondeinference/ed"
 homepage = "https://ondeinference.com"
 
 [workspace.dependencies]
@@ -24,4 +24,4 @@ tokio = { version = "1", features = ["sync"] }
 tauri = { version = "2", features = [] }
 
 # Internal
-onde-ed = { version = "0.1.0", path = "crates/onde-ed" }
+ed-agent = { version = "0.1.0", path = "crates/ed-agent" }

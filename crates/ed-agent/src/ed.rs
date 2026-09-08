@@ -1,5 +1,6 @@
 //! The agent handle.
 
+use std::future::Future;
 use std::time::Duration;
 
 use log::{error, info};
@@ -62,16 +63,72 @@ impl<S: StatusSink> Ed<S> {
         &self.engine
     }
 
+    /// Run any load, reporting the transitions around it.
+    ///
+    /// Emits [`EngineStatus::Loading`] before `load` starts and then either
+    /// [`Ready`](EngineStatus::Ready) or [`Error`](EngineStatus::Error). That
+    /// sequence is the whole reason this method exists: calling a
+    /// [`ChatEngine`] load path directly leaves the UI with no way to know a
+    /// multi-minute download has begun.
+    ///
+    /// Ed takes a closure rather than wrapping each load path by name because
+    /// `onde`'s load APIs take types Ed has no business in its public
+    /// signature — `ChatEngine::load_assigned_model` takes an `Environment`
+    /// from the smbCloud SDK, and *which* crate that type comes from changed
+    /// between `onde` releases. Naming it here would drag that dependency into
+    /// every host and pin them all to Ed's version of it. Passing a closure
+    /// keeps Ed's dependency surface to `onde` alone and works for load paths
+    /// that don't exist yet.
+    ///
+    /// ```no_run
+    /// # use ed_agent::{Ed, GgufModelConfig};
+    /// # async fn example(ed: Ed) {
+    /// ed.load_with("Qwen 2.5", |engine| {
+    ///     engine.load_gguf_model(GgufModelConfig::qwen25_1_5b(), None, None)
+    /// })
+    /// .await
+    /// .expect("load");
+    /// # }
+    /// ```
+    ///
+    /// `model_name` is what the host wants the UI to show while loading; it is
+    /// reported with each transition and needn't match what the engine ends up
+    /// calling the model.
+    pub async fn load_with<'a, F, Fut>(
+        &'a self,
+        model_name: &str,
+        load: F,
+    ) -> Result<Duration, InferenceError>
+    where
+        F: FnOnce(&'a ChatEngine) -> Fut,
+        Fut: Future<Output = Result<Duration, InferenceError>>,
+    {
+        info!("ed: loading model {model_name}");
+        self.sink
+            .status_changed(EngineStatus::Loading, Some(model_name), None);
+
+        match load(&self.engine).await {
+            Ok(elapsed) => {
+                info!("ed: loaded {model_name} in {}", format_duration(elapsed));
+                self.sink
+                    .status_changed(EngineStatus::Ready, Some(model_name), None);
+                Ok(elapsed)
+            }
+            Err(err) => {
+                error!("ed: failed to load {model_name}: {err}");
+                let message = err.to_string();
+                self.sink
+                    .status_changed(EngineStatus::Error, Some(model_name), Some(&message));
+                Err(err)
+            }
+        }
+    }
+
     /// Load a GGUF model, reporting each transition.
     ///
-    /// Emits [`EngineStatus::Loading`] before starting and then either
-    /// [`Ready`](EngineStatus::Ready) or [`Error`](EngineStatus::Error). That
-    /// sequence is the whole reason this method exists: calling
-    /// [`ChatEngine::load_gguf_model`] directly leaves the UI with no way to
-    /// know a multi-minute download has begun.
-    ///
-    /// Downloads the weights first if they aren't in the local cache, so the
-    /// `Loading` state can last a long time on a cold start.
+    /// A convenience over [`load_with`](Ed::load_with) for the most common
+    /// path. Downloads the weights first if they aren't in the local cache, so
+    /// the `Loading` state can last a long time on a cold start.
     pub async fn load(
         &self,
         config: GgufModelConfig,
@@ -79,29 +136,10 @@ impl<S: StatusSink> Ed<S> {
         sampling: Option<SamplingConfig>,
     ) -> Result<Duration, InferenceError> {
         let model_name = config.display_name.clone();
-        info!("ed: loading model {model_name}");
-        self.sink
-            .status_changed(EngineStatus::Loading, Some(&model_name), None);
-
-        match self
-            .engine
-            .load_gguf_model(config, system_prompt, sampling)
-            .await
-        {
-            Ok(elapsed) => {
-                info!("ed: loaded {model_name} in {}", format_duration(elapsed));
-                self.sink
-                    .status_changed(EngineStatus::Ready, Some(&model_name), None);
-                Ok(elapsed)
-            }
-            Err(err) => {
-                error!("ed: failed to load {model_name}: {err}");
-                let message = err.to_string();
-                self.sink
-                    .status_changed(EngineStatus::Error, Some(&model_name), Some(&message));
-                Err(err)
-            }
-        }
+        self.load_with(&model_name, |engine| {
+            engine.load_gguf_model(config, system_prompt, sampling)
+        })
+        .await
     }
 
     /// Unload the current model, returning its display name if one was loaded.
@@ -170,6 +208,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         statuses: Mutex<Vec<(EngineStatus, Option<String>)>>,
+        errors: Mutex<Vec<Option<String>>>,
         replies: Mutex<Vec<ChatReply>>,
     }
 
@@ -177,14 +216,24 @@ mod tests {
         fn statuses(&self) -> Vec<(EngineStatus, Option<String>)> {
             self.statuses.lock().unwrap().clone()
         }
+
+        fn errors(&self) -> Vec<Option<String>> {
+            self.errors.lock().unwrap().clone()
+        }
     }
 
     impl StatusSink for &'static RecordingSink {
-        fn status_changed(&self, status: EngineStatus, model_name: Option<&str>, _: Option<&str>) {
+        fn status_changed(
+            &self,
+            status: EngineStatus,
+            model_name: Option<&str>,
+            error: Option<&str>,
+        ) {
             self.statuses
                 .lock()
                 .unwrap()
                 .push((status, model_name.map(str::to_owned)));
+            self.errors.lock().unwrap().push(error.map(str::to_owned));
         }
 
         fn replied(&self, reply: &ChatReply) {
@@ -233,5 +282,53 @@ mod tests {
         let ed = Ed::default();
         ed.unload().await;
         assert_eq!(ed.info().await.status, EngineStatus::Unloaded);
+    }
+
+    #[tokio::test]
+    async fn a_successful_load_reports_loading_then_ready() {
+        // The ordering is the feature: a UI that only ever sees the final
+        // state has no way to put up a spinner for a load that can take
+        // minutes.
+        let sink = sink();
+        let ed = Ed::with_sink(sink);
+
+        let elapsed = ed
+            .load_with("Test model", |_| async { Ok(Duration::from_secs(2)) })
+            .await
+            .expect("the closure succeeded");
+
+        assert_eq!(elapsed, Duration::from_secs(2));
+        assert_eq!(
+            sink.statuses(),
+            vec![
+                (EngineStatus::Loading, Some("Test model".to_owned())),
+                (EngineStatus::Ready, Some("Test model".to_owned())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_load_reports_loading_then_error_with_the_reason() {
+        let sink = sink();
+        let ed = Ed::with_sink(sink);
+
+        let err = ed
+            .load_with("Test model", |_| async {
+                Err(InferenceError::Other {
+                    reason: "no weights".to_owned(),
+                })
+            })
+            .await
+            .expect_err("the closure failed");
+
+        assert!(err.to_string().contains("no weights"));
+        assert_eq!(
+            sink.statuses(),
+            vec![
+                (EngineStatus::Loading, Some("Test model".to_owned())),
+                (EngineStatus::Error, Some("Test model".to_owned())),
+            ]
+        );
+        assert_eq!(sink.errors(), vec![None, Some("no weights".to_owned())]);
     }
 }

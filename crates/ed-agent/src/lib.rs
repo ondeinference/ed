@@ -29,7 +29,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use onde_ed::{Ed, GgufModelConfig};
+//! use ed_agent::{Ed, GgufModelConfig};
 //!
 //! # async fn example() {
 //! let ed = Ed::new();
@@ -51,7 +51,7 @@ pub use ed::Ed;
 pub use reply::ChatReply;
 pub use sink::{NoopSink, StatusSink};
 
-// Re-exported so a host depends on `onde-ed` alone and never has to match a
+// Re-exported so a host depends on `ed-agent` alone and never has to match a
 // second `onde` version against this crate's.
 pub use onde::inference::types::ChatMessage;
 pub use onde::inference::{

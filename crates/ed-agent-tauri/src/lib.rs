@@ -1,17 +1,17 @@
-//! Tauri bindings for [Ed](onde_ed::Ed).
+//! Tauri bindings for [Ed](ed_agent::Ed).
 //!
 //! Ed's core is framework-agnostic and reports through a
-//! [`StatusSink`](onde_ed::StatusSink). This crate is the Tauri implementation
+//! [`StatusSink`](ed_agent::StatusSink). This crate is the Tauri implementation
 //! of that sink plus the commands a webview calls.
 //!
 //! # Wiring it up
 //!
-//! Build an [`Ed`](onde_ed::Ed) around a [`TauriSink`] and manage it during
+//! Build an [`Ed`](ed_agent::Ed) around a [`TauriSink`] and manage it during
 //! setup:
 //!
 //! ```no_run
-//! use onde_ed::Ed;
-//! use onde_ed_tauri::{EdState, TauriSink};
+//! use ed_agent::Ed;
+//! use ed_agent_tauri::{EdState, TauriSink};
 //! use tauri::Manager;
 //!
 //! fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -28,17 +28,17 @@
 //! tauri::Builder::default()
 //!     .setup(|app| setup(app))
 //!     .invoke_handler(tauri::generate_handler![
-//!         onde_ed_tauri::chat_get_status,
-//!         onde_ed_tauri::chat_get_history,
-//!         onde_ed_tauri::chat_clear_history,
-//!         onde_ed_tauri::chat_send_message,
+//!         ed_agent_tauri::chat_get_status,
+//!         ed_agent_tauri::chat_get_history,
+//!         ed_agent_tauri::chat_clear_history,
+//!         ed_agent_tauri::chat_send_message,
 //!     ])
 //!     .run(tauri::generate_context!())
 //!     .expect("run");
 //! ```
 //!
 //! Loading a model is deliberately not a command here: which model, and from
-//! where, is an application decision. Call [`Ed::load`](onde_ed::Ed::load)
+//! where, is an application decision. Call [`Ed::load`](ed_agent::Ed::load)
 //! from your own command or during setup.
 //!
 //! # Events
@@ -47,7 +47,7 @@
 //! already emit them so a frontend needs no change:
 //!
 //! - [`EVENT_CHAT_STATUS_CHANGED`] with a [`ChatStatusPayload`]
-//! - [`EVENT_CHAT_REPLY`] with a [`ChatReply`](onde_ed::ChatReply)
+//! - [`EVENT_CHAT_REPLY`] with a [`ChatReply`](ed_agent::ChatReply)
 
 #![forbid(unsafe_code)]
 

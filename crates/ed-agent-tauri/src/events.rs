@@ -1,6 +1,6 @@
 //! Event names and payloads emitted to the webview.
 
-use onde_ed::EngineStatus;
+use ed_agent::EngineStatus;
 use serde::{Deserialize, Serialize};
 
 /// Emitted whenever the engine's lifecycle status changes.

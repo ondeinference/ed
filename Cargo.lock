@@ -1685,6 +1685,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 
 [[package]]
+name = "ed-agent"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "onde",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "ed-agent-tauri"
+version = "0.1.0"
+dependencies = [
+ "ed-agent",
+ "log",
+ "serde",
+ "tauri",
+]
+
+[[package]]
 name = "ego-tree"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4546,26 +4566,6 @@ dependencies = [
  "safetensors 0.8.0",
  "serde",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "onde-ed"
-version = "0.1.0"
-dependencies = [
- "log",
- "onde",
- "serde",
- "tokio",
-]
-
-[[package]]
-name = "onde-ed-tauri"
-version = "0.1.0"
-dependencies = [
- "log",
- "onde-ed",
- "serde",
- "tauri",
 ]
 
 [[package]]
