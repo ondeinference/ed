@@ -9,8 +9,8 @@ metered token, no round trip, and nothing to leak.
 
 ## Why it exists
 
-Four applications needed the same thing: load a model, know whether it's ready,
-keep a conversation, hand back a reply. Four times somebody wrote it again. Two
+Seven applications needed the same thing: load a model, know whether it's ready,
+keep a conversation, hand back a reply. Seven times somebody wrote it again. Two
 of them ended up byte-identical in three files.
 
 None of that code was interesting. It was the wiring between an inference engine
