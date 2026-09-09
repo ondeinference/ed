@@ -1,0 +1,142 @@
+name: Release SDK Swift
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish Ed Swift release assets from the selected ref"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Existing semver tag to publish on manual runs"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Validate tag matches workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "ed-agent"))')"
+          test "$GITHUB_REF_NAME" = "$version"
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo publish --dry-run --locked -p ed-agent
+
+  build-and-release:
+    needs: preflight
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,aarch64-apple-darwin
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - run: .github/scripts/build-swift-xcframework.sh
+      - id: meta
+        run: |
+          echo "version=$(cat dist/swift/version.txt)" >> "$GITHUB_OUTPUT"
+          echo "checksum=$(cat dist/swift/EdFramework.checksum.txt)" >> "$GITHUB_OUTPUT"
+      - id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="${INPUT_RELEASE_TAG}"
+          fi
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: test -n "$RELEASE_TAG" && test "$RELEASE_TAG" = "$VERSION"
+      - name: Upload build artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ed-swift-xcframework
+          path: |
+            dist/swift/EdFramework.xcframework.zip
+            dist/swift/EdFramework.checksum.txt
+            dist/swift/version.txt
+            dist/swift/Package/Sources/Ed/ed_agent_ffi.swift
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release.outputs.release_tag }}
+          name: ${{ steps.release.outputs.release_tag }}
+          generate_release_notes: true
+          files: |
+            dist/swift/EdFramework.xcframework.zip
+            dist/swift/EdFramework.checksum.txt
+      - name: Checkout onde-ed-swift
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        uses: actions/checkout@v6
+        with:
+          repository: ondeinference/onde-ed-swift
+          token: ${{ secrets.ED_SWIFT_PAT }}
+          path: onde-ed-swift
+      - name: Update Swift package
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        env:
+          CHECKSUM: ${{ steps.meta.outputs.checksum }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.release_tag }}/EdFramework.xcframework.zip
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          package = pathlib.Path("onde-ed-swift/Package.swift")
+          source = package.read_text()
+          source, urls = re.subn(r'(let releaseFrameworkURL =\s*\n\s*")([^"]+)(")', rf'\g<1>{os.environ["RELEASE_URL"]}\g<3>', source, count=1)
+          source, sums = re.subn(r'(let releaseFrameworkChecksum =\s*\n\s*")([^"]+)(")', rf'\g<1>{os.environ["CHECKSUM"]}\g<3>', source, count=1)
+          if (urls, sums) != (1, 1):
+              raise RuntimeError("Package.swift release constants were not found")
+          package.write_text(source)
+          PY
+          cp dist/swift/Package/Sources/Ed/ed_agent_ffi.swift onde-ed-swift/Sources/Ed/ed_agent_ffi.swift
+      - name: Commit and tag Swift package
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        env:
+          VERSION: ${{ steps.release.outputs.release_tag }}
+        run: |
+          cd onde-ed-swift
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift Sources/Ed/ed_agent_ffi.swift
+          git diff --cached --quiet || git commit -m "Release $VERSION"
+          git push origin HEAD:main
+          if git ls-remote --tags origin "refs/tags/$VERSION" | grep -q "refs/tags/$VERSION"; then
+            echo "::warning::Tag $VERSION already exists; leaving it unchanged."
+          else
+            git tag -a "$VERSION" -m "Release $VERSION"
+            git push origin "$VERSION"
+          fi

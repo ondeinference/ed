@@ -46,14 +46,21 @@
 mod ed;
 mod reply;
 mod sink;
+mod tool;
 
 pub use ed::Ed;
 pub use reply::ChatReply;
-pub use sink::{NoopSink, StatusSink};
+pub use sink::{EventSink, NoopSink, StatusSink};
+pub use tool::{
+    AgentConfig, AgentError, AgentReply, AgentToolDefinition, ApprovalDecision, ApprovalHandler,
+    ApprovalRequest, DenyApprovals, RejectingExecutor, ToolCall, ToolExecutionResult, ToolExecutor,
+    ToolRisk,
+};
 
 // Re-exported so a host depends on `ed-agent` alone and never has to match a
 // second `onde` version against this crate's.
-pub use onde::inference::types::ChatMessage;
+pub use onde::inference::types::{ChatMessage, ChatRole};
 pub use onde::inference::{
     ChatEngine, EngineInfo, EngineStatus, GgufModelConfig, InferenceError, SamplingConfig,
+    ToolCallingSupport, UqffModelConfig,
 };

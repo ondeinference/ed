@@ -14,8 +14,12 @@ homepage.workspace = true
 
 [dependencies]
 onde.workspace = true
+async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 log.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync"] }

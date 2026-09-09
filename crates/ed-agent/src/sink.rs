@@ -2,7 +2,7 @@
 
 use onde::inference::EngineStatus;
 
-use crate::ChatReply;
+use crate::{AgentReply, ApprovalRequest, ChatReply, ToolCall, ToolExecutionResult};
 
 /// Receives lifecycle transitions and completed replies.
 ///
@@ -17,12 +17,18 @@ use crate::ChatReply;
 /// Ed is mid-operation. Hand off to a channel or an event bus rather than
 /// blocking. Implementations must be `Send + Sync` because a load or a send
 /// may be driven from any task.
-pub trait StatusSink: Send + Sync + 'static {
+pub trait EventSink: Send + Sync + 'static {
     /// The engine moved to a new lifecycle state.
     ///
     /// `model_name` is the model involved where one is known, and `error`
     /// carries the reason when `status` is [`EngineStatus::Error`].
-    fn status_changed(&self, status: EngineStatus, model_name: Option<&str>, error: Option<&str>);
+    fn status_changed(
+        &self,
+        _status: EngineStatus,
+        _model_name: Option<&str>,
+        _error: Option<&str>,
+    ) {
+    }
 
     /// An inference turn finished, successfully or not.
     ///
@@ -30,8 +36,18 @@ pub trait StatusSink: Send + Sync + 'static {
     /// inference is slow: a host that awaits the call from a UI callback can
     /// have that callback collected before it resolves. Emitting lets the view
     /// pick the result up independently.
-    fn replied(&self, reply: &ChatReply);
+    fn replied(&self, _reply: &ChatReply) {}
+
+    fn tool_requested(&self, _call: &ToolCall) {}
+    fn approval_requested(&self, _request: &ApprovalRequest) {}
+    fn tool_started(&self, _call: &ToolCall) {}
+    fn tool_finished(&self, _result: &ToolExecutionResult) {}
+    fn agent_replied(&self, _reply: &AgentReply) {}
+    fn warning(&self, _message: &str) {}
 }
+
+/// Compatibility name retained for the original Ed API.
+pub use EventSink as StatusSink;
 
 /// A [`StatusSink`] that drops everything.
 ///
@@ -40,7 +56,4 @@ pub trait StatusSink: Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopSink;
 
-impl StatusSink for NoopSink {
-    fn status_changed(&self, _: EngineStatus, _: Option<&str>, _: Option<&str>) {}
-    fn replied(&self, _: &ChatReply) {}
-}
+impl EventSink for NoopSink {}

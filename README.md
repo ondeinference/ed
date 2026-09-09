@@ -2,10 +2,10 @@
 
 **Embed Ed.** Your app gets a brain. Your users keep their data.
 
-Ed is a chat agent you drop into an application. It loads an open-weights model,
-tells your interface when that model is ready, keeps the conversation, and hands
-back replies. The model runs on the user's device — there is no API key, no
-metered token, no round trip, and nothing to leak.
+Ed is an agent you drop into an application. It loads an open-weights model,
+keeps the conversation, calls only the host tools you register, and hands back
+replies. The model runs on the user's device — there is no metered inference
+API and private context does not need to leave the device.
 
 ## Why it exists
 
@@ -57,14 +57,16 @@ let reply = ed.send("Summarise this thread.").await;
 println!("{}", reply.reply.unwrap_or_default());
 ```
 
-That's a working agent. To hear about state changes rather than polling for
-them, implement `StatusSink` and build with `Ed::with_sink`.
+Construct with `Ed::with_agent` to provide the executor for registered tools
+and the approval handler for mutating tools. Read-only tools run directly;
+mutating tools must receive `AllowOnce` or `AllowForSession` first.
 
 ## Crates
 
 | Crate | What it's for |
 | --- | --- |
 | [`ed-agent`](crates/ed-agent) | The agent. No framework dependency. |
+| [`ed-agent-ffi`](crates/ed-agent-ffi) | UniFFI bridge used by the Swift XCFramework. |
 | [`ed-agent-tauri`](crates/ed-agent-tauri) | Tauri bindings: a sink that emits to the webview, plus the commands it invokes. |
 
 Free the intelligence.
@@ -72,4 +74,4 @@ Free the intelligence.
 ## Copyright
 
 © 2026 [Splitfire AB](https://5mb.app) ([Onde Inference](https://ondeinference.com)).
-Licensed under Apache-2.0.
+Licensed under MIT or Apache-2.0.

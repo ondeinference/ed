@@ -11,7 +11,9 @@ application built on it was writing for itself.
   not one call. Ed drives `Loading -> Ready` (or `-> Error`) and reports each
   transition.
 - **Notification.** `onde` exposes status by polling. A UI needs to be told. Ed
-  pushes transitions and replies to a `StatusSink` you implement.
+  pushes transitions, tool activity, and replies to an `EventSink` you implement.
+- **Tool calling.** The host registers an explicit JSON-schema capability list.
+  Read-only tools run automatically; mutating tools require host approval.
 - **A flattened reply.** Inference returns `Result<InferenceResult, _>`; a
   frontend wants one shape covering both outcomes. That's `ChatReply`.
 
@@ -30,8 +32,8 @@ let reply = ed.send("Summarise this thread.").await;
 println!("{}", reply.reply.unwrap_or_default());
 ```
 
-To hear about state changes, implement `StatusSink` and construct with
-`Ed::with_sink`. For Tauri applications,
+Use `Ed::with_agent` to provide a `ToolExecutor`, `ApprovalHandler`, and
+`EventSink`. For Tauri applications,
 [`ed-agent-tauri`](https://crates.io/crates/ed-agent-tauri) provides that
 implementation plus the commands a webview invokes.
 
@@ -65,4 +67,4 @@ support list silently disables chat on a platform that would have worked.
 ## Copyright
 
 © 2026 [Splitfire AB](https://5mb.app) ([Onde Inference](https://ondeinference.com)).
-Licensed under Apache-2.0.
+Licensed under MIT or Apache-2.0.
