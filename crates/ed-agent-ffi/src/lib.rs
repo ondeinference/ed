@@ -40,6 +40,15 @@ impl From<FfiToolRisk> for ToolRisk {
     }
 }
 
+impl From<ToolRisk> for FfiToolRisk {
+    fn from(value: ToolRisk) -> Self {
+        match value {
+            ToolRisk::ReadOnly => Self::ReadOnly,
+            ToolRisk::Mutating => Self::Mutating,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiToolDefinition {
     pub name: String,
@@ -61,6 +70,26 @@ impl From<&ToolCall> for FfiToolCall {
             id: value.id.clone(),
             name: value.name.clone(),
             arguments: value.arguments.clone(),
+        }
+    }
+}
+
+/// A tool call waiting on the user, with the risk that made it wait.
+///
+/// The risk travels with the call because it is the reason an approval sheet
+/// is on screen at all: a host that only received the call would have to look
+/// the tool up again to tell the user whether it is about to change anything.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiApprovalRequest {
+    pub call: FfiToolCall,
+    pub risk: FfiToolRisk,
+}
+
+impl From<&ApprovalRequest> for FfiApprovalRequest {
+    fn from(value: &ApprovalRequest) -> Self {
+        Self {
+            call: (&value.call).into(),
+            risk: value.risk.into(),
         }
     }
 }
@@ -298,14 +327,14 @@ pub trait FfiToolExecutor: Send + Sync {
 #[uniffi::export(callback_interface)]
 #[async_trait]
 pub trait FfiApprovalHandler: Send + Sync {
-    async fn approve(&self, call: FfiToolCall) -> FfiApprovalDecision;
+    async fn approve(&self, request: FfiApprovalRequest) -> FfiApprovalDecision;
 }
 
 #[uniffi::export(callback_interface)]
 pub trait FfiEventListener: Send + Sync {
     fn status_changed(&self, update: FfiStatusUpdate);
     fn tool_requested(&self, call: FfiToolCall);
-    fn approval_requested(&self, call: FfiToolCall);
+    fn approval_requested(&self, request: FfiApprovalRequest);
     fn tool_started(&self, call: FfiToolCall);
     fn tool_finished(&self, tool_call_id: String, content: String, is_error: bool);
     fn agent_replied(&self, reply: FfiAgentReply);
@@ -333,7 +362,7 @@ struct ForeignApprovals(Arc<dyn FfiApprovalHandler>);
 #[async_trait]
 impl ApprovalHandler for ForeignApprovals {
     async fn approve(&self, request: ApprovalRequest) -> ApprovalDecision {
-        self.0.approve((&request.call).into()).await.into()
+        self.0.approve((&request).into()).await.into()
     }
 }
 
@@ -354,7 +383,7 @@ impl EventSink for FfiSink {
     }
 
     fn approval_requested(&self, request: &ApprovalRequest) {
-        self.0.approval_requested((&request.call).into());
+        self.0.approval_requested(request.into());
     }
 
     fn tool_started(&self, call: &ToolCall) {

@@ -18,11 +18,31 @@ on:
 permissions:
   contents: write
 
+env:
+  # Ed depends on onde by path, so a checkout and its sibling engine move
+  # together and CI has to reproduce that layout. Both repos are public, so no
+  # token is needed. Point this at `development` while Ed relies on an onde API
+  # that has not been released yet, and back at `main` once it has.
+  ONDE_REF: main
+
 jobs:
   preflight:
-    runs-on: ubuntu-latest
+    # macOS rather than Linux: the release artifact is an XCFramework, the whole
+    # toolchain is Apple, and building onde on Linux means building mistral.rs
+    # plus a GTK/WebKit stack for the Tauri crate for no coverage anyone ships.
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ed
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: ed
+      - uses: actions/checkout@v6
+        with:
+          repository: ondeinference/onde
+          ref: ${{ env.ONDE_REF }}
+          path: onde
       - name: Read Rust toolchain
         run: |
           rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
@@ -39,13 +59,26 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo publish --dry-run --locked -p ed-agent
+      # Not --locked: packaging swaps the onde path dependency for the registry
+      # one, which is a lockfile change by definition. This step is also the
+      # gate that catches publishing Ed before the onde version it requires.
+      - run: cargo publish --dry-run -p ed-agent
 
   build-and-release:
     needs: preflight
     runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ed
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: ed
+      - uses: actions/checkout@v6
+        with:
+          repository: ondeinference/onde
+          ref: ${{ env.ONDE_REF }}
+          path: onde
       - name: Read Rust toolchain
         run: |
           rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
@@ -85,10 +118,10 @@ jobs:
         with:
           name: ed-swift-xcframework
           path: |
-            dist/swift/EdFramework.xcframework.zip
-            dist/swift/EdFramework.checksum.txt
-            dist/swift/version.txt
-            dist/swift/Package/Sources/Ed/ed_agent_ffi.swift
+            ed/dist/swift/EdFramework.xcframework.zip
+            ed/dist/swift/EdFramework.checksum.txt
+            ed/dist/swift/version.txt
+            ed/dist/swift/Package/Sources/Ed/ed_agent_ffi.swift
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
         uses: softprops/action-gh-release@v3
@@ -97,8 +130,8 @@ jobs:
           name: ${{ steps.release.outputs.release_tag }}
           generate_release_notes: true
           files: |
-            dist/swift/EdFramework.xcframework.zip
-            dist/swift/EdFramework.checksum.txt
+            ed/dist/swift/EdFramework.xcframework.zip
+            ed/dist/swift/EdFramework.checksum.txt
       - name: Checkout onde-ed-swift
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
         uses: actions/checkout@v6
@@ -108,6 +141,7 @@ jobs:
           path: onde-ed-swift
       - name: Update Swift package
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        working-directory: ${{ github.workspace }}
         env:
           CHECKSUM: ${{ steps.meta.outputs.checksum }}
           RELEASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.release_tag }}/EdFramework.xcframework.zip
@@ -122,13 +156,13 @@ jobs:
               raise RuntimeError("Package.swift release constants were not found")
           package.write_text(source)
           PY
-          cp dist/swift/Package/Sources/Ed/ed_agent_ffi.swift onde-ed-swift/Sources/Ed/ed_agent_ffi.swift
+          cp ed/dist/swift/Package/Sources/Ed/ed_agent_ffi.swift onde-ed-swift/Sources/Ed/ed_agent_ffi.swift
       - name: Commit and tag Swift package
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        working-directory: ${{ github.workspace }}/onde-ed-swift
         env:
           VERSION: ${{ steps.release.outputs.release_tag }}
         run: |
-          cd onde-ed-swift
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Package.swift Sources/Ed/ed_agent_ffi.swift

@@ -10,7 +10,7 @@ edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 authors = ["Splitfire AB"]
-repository = "https://github.com/ondeinference/onde-ed"
+repository = "https://github.com/ondeinference/ed"
 homepage = "https://ondeinference.com"
 
 [workspace.dependencies]

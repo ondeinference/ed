@@ -20,10 +20,14 @@
 //! # Platforms
 //!
 //! Ed has no `cfg(target_os)` gates. `onde` already splits real and fallback
-//! implementations internally, so this crate compiles everywhere and simply
-//! surfaces `onde`'s error on a platform it can't run inference on. Do not add
-//! platform gates here, and be careful about adding them in a host: a gate
-//! narrower than `onde`'s own support list silently disables chat on a
+//! implementations internally, so this crate compiles on every platform `onde`
+//! supports (macOS, iOS, tvOS, visionOS, watchOS, Windows, Linux, Android) and
+//! simply surfaces `onde`'s error where it can't run inference. Outside that
+//! list `onde` falls back to a stub whose signatures differ, so Ed does not
+//! build there either.
+//!
+//! Do not add platform gates here, and be careful about adding them in a host:
+//! a gate narrower than `onde`'s own support list silently disables chat on a
 //! platform that would have worked.
 //!
 //! # Example

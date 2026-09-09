@@ -69,8 +69,34 @@ impl<S: EventSink> Ed<S> {
         approvals: Arc<dyn ApprovalHandler>,
         config: AgentConfig,
     ) -> Self {
+        Self::with_agent_and_app_id(sink, executor, approvals, config, None)
+    }
+
+    /// Associate telemetry with an Onde app id. See [`ChatEngine::with_app_id`].
+    pub fn with_app_id(sink: S, onde_app_id: Option<String>) -> Self {
+        Self::with_agent_and_app_id(
+            sink,
+            Arc::new(RejectingExecutor),
+            Arc::new(DenyApprovals),
+            AgentConfig::default(),
+            onde_app_id,
+        )
+    }
+
+    /// The full constructor: tools, approvals, and an Onde app id together.
+    ///
+    /// The narrower constructors each fill in defaults for what they don't
+    /// take. Use this one when you need both host tools and telemetry, which
+    /// the others cannot express between them.
+    pub fn with_agent_and_app_id(
+        sink: S,
+        executor: Arc<dyn ToolExecutor>,
+        approvals: Arc<dyn ApprovalHandler>,
+        config: AgentConfig,
+        onde_app_id: Option<String>,
+    ) -> Self {
         Self {
-            engine: ChatEngine::new(),
+            engine: ChatEngine::with_app_id(onde_app_id),
             sink,
             tools: tokio::sync::RwLock::new(HashMap::new()),
             executor,
@@ -79,21 +105,6 @@ impl<S: EventSink> Ed<S> {
             turn: tokio::sync::Mutex::new(()),
             cancelled: AtomicBool::new(false),
             agent_config: config.validated(),
-        }
-    }
-
-    /// Associate telemetry with an Onde app id. See [`ChatEngine::with_app_id`].
-    pub fn with_app_id(sink: S, onde_app_id: Option<String>) -> Self {
-        Self {
-            engine: ChatEngine::with_app_id(onde_app_id),
-            sink,
-            tools: tokio::sync::RwLock::new(HashMap::new()),
-            executor: Arc::new(RejectingExecutor),
-            approvals: Arc::new(DenyApprovals),
-            session_grants: tokio::sync::Mutex::new(HashSet::new()),
-            turn: tokio::sync::Mutex::new(()),
-            cancelled: AtomicBool::new(false),
-            agent_config: AgentConfig::default(),
         }
     }
 
@@ -202,7 +213,7 @@ impl<S: EventSink> Ed<S> {
     /// Never returns an error: a failure is reported in
     /// [`ChatReply::error`] so a caller has one shape to render either way.
     /// The reply also goes to the sink, so a host can render it from an event
-    /// instead of awaiting this call — see [`StatusSink::replied`].
+    /// instead of awaiting this call — see [`EventSink::replied`].
     pub async fn send(&self, message: impl Into<String>) -> ChatReply {
         let reply = match self.engine.send_message(message).await {
             Ok(result) => ChatReply::ok(result.text, result.duration_display),
@@ -313,27 +324,45 @@ impl<S: EventSink> Ed<S> {
     }
 
     /// Run a complete local agent turn, including any requested host tools.
+    ///
+    /// With no tools registered this is one inference call. Otherwise Ed
+    /// alternates between the model and the host's executor until the model
+    /// answers in text, or until
+    /// [`max_tool_rounds`](AgentConfig::max_tool_rounds) is spent, whichever
+    /// comes first. Reaching the budget is reported to the sink as a warning,
+    /// and yields [`AgentError::ToolRoundsExhausted`] if there is no usable
+    /// text by then.
+    ///
+    /// Reports [`EventSink::agent_replied`] on success. It does *not* report
+    /// [`EventSink::replied`]; that belongs to [`send`](Ed::send).
     pub async fn run(&self, message: impl Into<String>) -> Result<AgentReply, AgentError> {
         let _turn = self.turn.lock().await;
         self.cancelled.store(false, Ordering::Release);
 
         let registered = self.tools.read().await.clone();
         if registered.is_empty() {
-            let reply = self.send(message).await;
-            return match (reply.reply, reply.duration, reply.error) {
-                (Some(text), Some(duration), None) => {
-                    let agent_reply = AgentReply {
-                        text,
-                        duration_seconds: 0.0,
-                        duration,
-                        tool_rounds: 0,
-                    };
-                    self.sink.agent_replied(&agent_reply);
-                    Ok(agent_reply)
-                }
-                (_, _, Some(reason)) => Err(AgentError::Inference { reason }),
-                _ => Err(AgentError::EmptyReply),
+            // Deliberately not routed through `send`: that reports a
+            // `ChatReply` to the sink, and a host listening for both events
+            // would render this turn's answer twice. An agent turn reports
+            // `agent_replied` and nothing else.
+            let result =
+                self.engine
+                    .send_message(message)
+                    .await
+                    .map_err(|error| AgentError::Inference {
+                        reason: error.to_string(),
+                    })?;
+            if result.text.trim().is_empty() {
+                return Err(AgentError::EmptyReply);
+            }
+            let agent_reply = AgentReply {
+                text: result.text,
+                duration_seconds: result.duration_secs,
+                duration: result.duration_display,
+                tool_rounds: 0,
             };
+            self.sink.agent_replied(&agent_reply);
+            return Ok(agent_reply);
         }
 
         match self.engine.tool_calling_support().await {
@@ -363,8 +392,38 @@ impl<S: EventSink> Ed<S> {
             })?;
         let mut duration_seconds = result.duration_secs;
         let mut rounds = 0_u8;
+        let max_rounds = self.agent_config.max_tool_rounds;
+        let mut exhausted = false;
 
         while !result.tool_calls.is_empty() {
+            if !self.agent_config.allows_round(rounds) {
+                // The budget only stops Ed *offering* tools; it cannot stop the
+                // model asking. `onde` parses tool calls out of every response
+                // whether or not tools were sent, so a model that keeps
+                // emitting tool-call syntax would loop here until `rounds`
+                // overflowed and wrapped back under the limit. This is the
+                // loop's only hard exit.
+                //
+                // The model's last turn is already in history carrying these
+                // calls. Leaving them unanswered would make the next turn's
+                // message sequence invalid, so close them out the way
+                // cancelling does.
+                let unanswered = result
+                    .tool_calls
+                    .iter()
+                    .map(|pending| ToolResult {
+                        tool_call_id: pending.id.clone(),
+                        content: "tool was not executed: the agent ran out of tool rounds"
+                            .to_string(),
+                    })
+                    .collect();
+                self.engine.record_tool_results(unanswered).await;
+                self.sink.warning(&format!(
+                    "the agent stopped after {max_rounds} tool rounds; the model kept requesting tools"
+                ));
+                exhausted = true;
+                break;
+            }
             rounds += 1;
             let mut tool_results = Vec::with_capacity(result.tool_calls.len());
 
@@ -401,7 +460,7 @@ impl<S: EventSink> Ed<S> {
                 return Err(AgentError::Cancelled);
             }
 
-            let next_tools = if rounds < self.agent_config.max_tool_rounds {
+            let next_tools = if self.agent_config.allows_round(rounds) {
                 Some(definitions.as_slice())
             } else {
                 None
@@ -417,7 +476,11 @@ impl<S: EventSink> Ed<S> {
         }
 
         if result.text.trim().is_empty() {
-            return Err(AgentError::EmptyReply);
+            return Err(if exhausted {
+                AgentError::ToolRoundsExhausted { rounds: max_rounds }
+            } else {
+                AgentError::EmptyReply
+            });
         }
         let reply = AgentReply {
             text: result.text,
@@ -448,8 +511,14 @@ impl<S: EventSink> Ed<S> {
     ///
     /// Leaves the model loaded — this starts a new conversation, it doesn't
     /// tear down the engine.
+    ///
+    /// Also drops every `AllowForSession` grant. The user approved those
+    /// mutating tools for a conversation, and this ends the conversation;
+    /// carrying the grants into the next one would keep consent alive past the
+    /// thing it was given for.
     pub async fn clear_history(&self) -> usize {
         let cleared = self.engine.clear_history().await;
+        self.session_grants.lock().await.clear();
         info!("ed: cleared {cleared} messages");
         cleared
     }
@@ -690,6 +759,33 @@ mod tests {
 
         assert_eq!(executor.0.load(Ordering::Relaxed), 2);
         assert!(ed.session_grants.lock().await.contains("save_note"));
+    }
+
+    #[tokio::test]
+    async fn clearing_the_conversation_revokes_session_grants() {
+        // The grant was given for a conversation. Clearing the history ends
+        // that conversation, so the next one has to ask again.
+        let executor = Arc::new(CountingExecutor(AtomicUsize::new(0)));
+        let ed = Ed::with_agent(
+            NoopSink,
+            executor.clone(),
+            Arc::new(FixedApproval(ApprovalDecision::AllowForSession)),
+            AgentConfig::default(),
+        );
+        ed.register_tool(AgentToolDefinition::mutating(
+            "save_note",
+            "Save a note",
+            r#"{"type":"object"}"#,
+        ))
+        .await
+        .unwrap();
+        let tools = ed.tools.read().await.clone();
+        ed.execute_tool_call(&call("save_note"), &tools).await;
+        assert!(ed.session_grants.lock().await.contains("save_note"));
+
+        ed.clear_history().await;
+
+        assert!(ed.session_grants.lock().await.is_empty());
     }
 
     #[tokio::test]

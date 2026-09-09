@@ -1,6 +1,6 @@
 //! The commands a webview invokes.
 
-use ed_agent::{ChatMessage, ChatReply, Ed, EngineInfo};
+use ed_agent::{AgentReply, ChatMessage, ChatReply, Ed, EngineInfo};
 use tauri::State;
 
 use crate::sink::TauriSink;
@@ -59,4 +59,32 @@ pub async fn chat_send_message(
     message: String,
 ) -> Result<ChatReply, String> {
     Ok(state.ed.send(message).await)
+}
+
+/// Run a full agent turn, including any tools the host registered.
+///
+/// Reports progress as it goes: `chat_tool_requested`,
+/// `chat_approval_requested`, `chat_tool_started`, `chat_tool_finished`, and
+/// finally `chat_agent_reply`. As with [`chat_send_message`], prefer the event
+/// over awaiting this call, since an agent turn is slower still.
+///
+/// Unlike [`chat_send_message`] this returns an `Err` on failure rather than
+/// folding it into the payload: an agent turn has failure modes a chat reply
+/// doesn't (a model that can't call tools, a cancelled turn, a spent round
+/// budget), and flattening them all into an error string would throw away the
+/// distinction the frontend needs to respond to.
+#[tauri::command]
+pub async fn chat_run(state: State<'_, EdState>, message: String) -> Result<AgentReply, String> {
+    state
+        .ed
+        .run(message)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Cancel the agent turn in progress, if there is one.
+#[tauri::command]
+pub async fn chat_cancel(state: State<'_, EdState>) -> Result<(), String> {
+    state.ed.cancel();
+    Ok(())
 }
