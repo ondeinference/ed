@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, development]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # See the note in release-sdk-swift.yml: Ed and onde are checked out side by
+  # side because the dependency is a path dependency.
+  ONDE_REF: main
+
+jobs:
+  check:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ed
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: ed
+      - uses: actions/checkout@v6
+        with:
+          repository: ondeinference/onde
+          ref: ${{ env.ONDE_REF }}
+          path: onde
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          # The action installs a minimal profile, so the pinned toolchain has
+          # neither of these unless they are asked for by name.
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ed
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
