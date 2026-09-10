@@ -5,7 +5,7 @@ members = ["crates/ed-agent", "crates/ed-agent-ffi", "crates/ed-agent-tauri", "u
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
@@ -29,4 +29,4 @@ uniffi = { version = "=0.31.0", features = ["tokio"] }
 smbcloud-gresiq-sdk = "0.4.7"
 
 # Internal
-ed-agent = { version = "0.1.0", path = "crates/ed-agent" }
+ed-agent = { version = "1.0.0", path = "crates/ed-agent" }
