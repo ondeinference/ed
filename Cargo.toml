@@ -17,7 +17,7 @@ homepage = "https://ondeinference.com"
 # The inference engine Ed wraps. Cargo uses the sibling checkout locally and
 # publishes only the version requirement. Release Onde's tool-calling API
 # before publishing Ed.
-onde = { version = "1.2.5", path = "../onde" }
+onde = { version = "1.2.5" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
