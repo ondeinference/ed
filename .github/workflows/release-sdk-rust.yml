@@ -1,0 +1,140 @@
+name: Release SDK Rust (crates.io)
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the selected existing release tag to crates.io"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Existing vX.Y.Z tag to validate or publish on manual runs"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ed
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: ed
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - name: Validate release tag matches workspace version
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="$INPUT_RELEASE_TAG"
+          fi
+          test -n "$release_tag"
+          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git show-ref --verify --quiet "refs/tags/$release_tag"
+          test "$(git rev-list -n 1 "$release_tag")" = "$(git rev-parse HEAD)"
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "ed-agent"))')"
+          test "${release_tag#v}" = "$version"
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo publish --dry-run --locked -p ed-agent
+      - run: cargo publish --dry-run --locked -p ed-agent-tauri
+
+  publish:
+    needs: preflight
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+    runs-on: macos-26
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: ed
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: ed
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - id: version
+        run: |
+          echo "value=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "ed-agent"))')" >> "$GITHUB_OUTPUT"
+      - name: Check whether ed-agent is already published
+        id: core-published
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          if python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            test "$status" = 1 || exit "$status"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticate to publish ed-agent
+        if: steps.core-published.outputs.skip != 'true'
+        id: core-auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish ed-agent
+        if: steps.core-published.outputs.skip != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.core-auth.outputs.token }}
+        run: cargo publish --locked -p ed-agent
+      - name: Verify ed-agent reached crates.io
+        if: steps.core-published.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent --wait
+      - name: Check whether ed-agent-tauri is already published
+        id: tauri-published
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          if python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent-tauri; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            test "$status" = 1 || exit "$status"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticate to publish ed-agent-tauri
+        if: steps.tauri-published.outputs.skip != 'true'
+        id: tauri-auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish ed-agent-tauri
+        if: steps.tauri-published.outputs.skip != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.tauri-auth.outputs.token }}
+        run: cargo publish --locked -p ed-agent-tauri
+      - name: Verify ed-agent-tauri reached crates.io
+        if: steps.tauri-published.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent-tauri --wait
