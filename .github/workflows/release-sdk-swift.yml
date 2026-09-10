@@ -51,6 +51,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+          # The action installs a minimal profile, so the pinned toolchain has
+          # neither of these unless they are asked for by name.
+          components: rustfmt, clippy
       - name: Validate tag matches workspace version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
