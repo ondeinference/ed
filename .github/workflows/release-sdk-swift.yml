@@ -18,12 +18,14 @@ on:
 permissions:
   contents: write
 
-env:
-  # Ed depends on onde by path, so a checkout and its sibling engine move
-  # together and CI has to reproduce that layout. Both repos are public, so no
-  # token is needed. Point this at `development` while Ed relies on an onde API
-  # that has not been released yet, and back at `main` once it has.
-  ONDE_REF: main
+# One release at a time per tag. Not cancel-in-progress: the later steps create
+# a GitHub release and then push a commit and a tag to ed-swift, and killing a
+# run part-way through that leaves a release with no assets on it, or ed-swift
+# updated against a release that no longer matches. A duplicate run waits for
+# the 2h20m build ahead of it instead.
+concurrency:
+  group: release-sdk-swift-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   preflight:
@@ -38,11 +40,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           path: ed
-      - uses: actions/checkout@v6
-        with:
-          repository: ondeinference/onde
-          ref: ${{ env.ONDE_REF }}
-          path: onde
       - name: Read Rust toolchain
         run: |
           rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
@@ -77,11 +74,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           path: ed
-      - uses: actions/checkout@v6
-        with:
-          repository: ondeinference/onde
-          ref: ${{ env.ONDE_REF }}
-          path: onde
       - name: Read Rust toolchain
         run: |
           rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
