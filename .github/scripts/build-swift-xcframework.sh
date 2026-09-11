@@ -26,15 +26,33 @@ mkdir -p "$PACKAGE_DIR/Sources/Ed" "$HEADERS_DIR"
 
 cargo build --manifest-path uniffi-bindgen/Cargo.toml --release
 
-IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" cargo rustc --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-ios --release --lib --crate-type staticlib
-IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" cargo rustc --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-ios-sim --release --lib --crate-type staticlib
-MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" cargo rustc --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-darwin --release --lib --crate-type staticlib
-TVOS_DEPLOYMENT_TARGET="$TVOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-tvos --release --lib --crate-type staticlib
-TVOS_DEPLOYMENT_TARGET="$TVOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-tvos-sim --release --lib --crate-type staticlib
-XROS_DEPLOYMENT_TARGET="$VISIONOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-visionos --release --lib --crate-type staticlib
-XROS_DEPLOYMENT_TARGET="$VISIONOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-visionos-sim --release --lib --crate-type staticlib
-WATCHOS_DEPLOYMENT_TARGET="$WATCHOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-watchos --release --lib --crate-type staticlib
-WATCHOS_DEPLOYMENT_TARGET="$WATCHOS_DEPLOYMENT_TARGET" cargo +nightly rustc -Z build-std --target-dir "$APPLE_TARGET_DIR" --manifest-path "$MANIFEST" --target aarch64-apple-watchos-sim --release --lib --crate-type staticlib
+# Each slice takes 15-20 minutes and cargo never prints the target it is
+# building, so a bare `error: could not compile` an hour into the log cannot be
+# attributed without counting `Finished` lines. Announce every target.
+#
+# The tvOS, visionOS and watchOS targets are tier 3: no prebuilt std ships for
+# them, hence nightly and -Z build-std.
+build_target() {
+  local target="$1" deployment="$2"
+  shift 2
+  echo "::group::cargo rustc --target $target"
+  env "$deployment" cargo "$@" rustc \
+    --target-dir "$APPLE_TARGET_DIR" \
+    --manifest-path "$MANIFEST" \
+    --target "$target" \
+    --release --lib --crate-type staticlib
+  echo "::endgroup::"
+}
+
+build_target aarch64-apple-ios          "IPHONEOS_DEPLOYMENT_TARGET=$IOS_DEPLOYMENT_TARGET"
+build_target aarch64-apple-ios-sim      "IPHONEOS_DEPLOYMENT_TARGET=$IOS_DEPLOYMENT_TARGET"
+build_target aarch64-apple-darwin       "MACOSX_DEPLOYMENT_TARGET=$MACOS_DEPLOYMENT_TARGET"
+build_target aarch64-apple-tvos         "TVOS_DEPLOYMENT_TARGET=$TVOS_DEPLOYMENT_TARGET" +nightly -Z build-std
+build_target aarch64-apple-tvos-sim     "TVOS_DEPLOYMENT_TARGET=$TVOS_DEPLOYMENT_TARGET" +nightly -Z build-std
+build_target aarch64-apple-visionos     "XROS_DEPLOYMENT_TARGET=$VISIONOS_DEPLOYMENT_TARGET" +nightly -Z build-std
+build_target aarch64-apple-visionos-sim "XROS_DEPLOYMENT_TARGET=$VISIONOS_DEPLOYMENT_TARGET" +nightly -Z build-std
+build_target aarch64-apple-watchos      "WATCHOS_DEPLOYMENT_TARGET=$WATCHOS_DEPLOYMENT_TARGET" +nightly -Z build-std
+build_target aarch64-apple-watchos-sim  "WATCHOS_DEPLOYMENT_TARGET=$WATCHOS_DEPLOYMENT_TARGET" +nightly -Z build-std
 
 "$BINDGEN" generate "$APPLE_TARGET_DIR/aarch64-apple-ios/release/libed_agent_ffi.a" --crate ed_agent_ffi --language swift --out-dir "$PACKAGE_DIR/Sources/Ed"
 cp "$PACKAGE_DIR/Sources/Ed/ed_agent_ffiFFI.h" "$HEADERS_DIR/ed_agent_ffiFFI.h"

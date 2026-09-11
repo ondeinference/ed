@@ -30,3 +30,14 @@ smbcloud-gresiq-sdk = "0.4.7"
 
 # Internal
 ed-agent = { version = "1.0.0", path = "crates/ed-agent" }
+
+# gemm-common (via candle, via onde) depends on sysctl for every
+# `target_vendor = "apple"`, but sysctl 0.6.0 only has a `sys` module behind
+# macOS/iOS/tvOS/visionOS/freeBSD — the watchOS build fails to resolve it. onde
+# carries this same patch, but `[patch]` is only honoured from the manifest of
+# the workspace being built, so depending on onde does not inherit it: Ed has to
+# repeat it. The branch is cut from sysctl 0.6.0 rather than the fork's master
+# (0.7.1) because a patch that is semver-incompatible with the requirement in
+# the graph is silently ignored.
+[patch.crates-io]
+sysctl = { git = "https://github.com/setoelkahfi/sysctl-rs.git", branch = "feature/watchos-0.6" }
