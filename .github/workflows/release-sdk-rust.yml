@@ -57,8 +57,18 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo publish --dry-run --locked -p ed-agent
-      - run: cargo publish --dry-run --locked -p ed-agent-tauri
+      # Publishing Ed means publishing two crates in dependency order, and plain
+      # `cargo publish --dry-run` cannot cover the second one: packaging
+      # rewrites ed-agent-tauri's path dependency on ed-agent into a registry
+      # requirement, and `^1.0.0` cannot resolve until ed-agent is actually on
+      # crates.io. A [patch] does not help, since packaging ignores it by
+      # design. cargo-workspaces knows the order and its dry run warns about
+      # the unpublished sibling rather than failing on it, so ed-agent still
+      # gets a real packaging and verification pass here.
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces --version 0.4.2 --locked
+      - name: Dry-run the workspace publish
+        run: cargo workspaces publish --publish-as-is --dry-run --locked --yes
 
   publish:
     needs: preflight
@@ -83,58 +93,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - id: version
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces --version 0.4.2 --locked
+      # `plan --skip-published` is what makes a re-run safe: it lists only the
+      # crates still missing from crates.io, so a run that dies after ed-agent
+      # went up publishes just ed-agent-tauri the second time.
+      - name: Plan the publish
+        id: plan
         run: |
-          echo "value=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "ed-agent"))')" >> "$GITHUB_OUTPUT"
-      - name: Check whether ed-agent is already published
-        id: core-published
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          if python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            status=$?
-            test "$status" = 1 || exit "$status"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Authenticate to publish ed-agent
-        if: steps.core-published.outputs.skip != 'true'
-        id: core-auth
+          cargo workspaces plan --skip-published --json > plan.json
+          cat plan.json
+          count="$(python3 -c 'import json; print(len(json.load(open("plan.json"))))')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Authenticate to crates.io
+        if: steps.plan.outputs.count != '0'
+        id: auth
         uses: rust-lang/crates-io-auth-action@v1
-      - name: Publish ed-agent
-        if: steps.core-published.outputs.skip != 'true'
+      - name: Publish workspace crates
+        if: steps.plan.outputs.count != '0'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.core-auth.outputs.token }}
-        run: cargo publish --locked -p ed-agent
-      - name: Verify ed-agent reached crates.io
-        if: steps.core-published.outputs.skip != 'true'
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent --wait
-      - name: Check whether ed-agent-tauri is already published
-        id: tauri-published
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
+          TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          if python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent-tauri; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            status=$?
-            test "$status" = 1 || exit "$status"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Authenticate to publish ed-agent-tauri
-        if: steps.tauri-published.outputs.skip != 'true'
-        id: tauri-auth
-        uses: rust-lang/crates-io-auth-action@v1
-      - name: Publish ed-agent-tauri
-        if: steps.tauri-published.outputs.skip != 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.tauri-auth.outputs.token }}
-        run: cargo publish --locked -p ed-agent-tauri
-      - name: Verify ed-agent-tauri reached crates.io
-        if: steps.tauri-published.outputs.skip != 'true'
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: python3 scripts/crates-io-published.py "$VERSION" --crate ed-agent-tauri --wait
+          # --publish-interval gives the sparse index time to serve ed-agent
+          # before ed-agent-tauri's verification build tries to resolve it.
+          cargo workspaces publish \
+            --publish-as-is \
+            --yes \
+            --locked \
+            --publish-interval 15 \
+            --token "$TOKEN"
+      - name: Nothing to publish
+        if: steps.plan.outputs.count == '0'
+        run: echo "Every publishable crate at this version is already on crates.io."
