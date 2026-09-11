@@ -114,7 +114,18 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-        run: test -n "$RELEASE_TAG" && test "$RELEASE_TAG" = "$VERSION"
+        run: |
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "::error::release_tag is required when publish=true on workflow_dispatch runs."
+            exit 1
+          fi
+          # Ed tags carry a `v` prefix, version.txt does not, so compare the
+          # semver rather than the spelling -- the same normalisation preflight
+          # does on GITHUB_REF_NAME.
+          if [ "${RELEASE_TAG#v}" != "$VERSION" ]; then
+            echo "::error::Release tag '$RELEASE_TAG' does not match workspace version '$VERSION'."
+            exit 1
+          fi
       - name: Upload build artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
@@ -135,13 +146,13 @@ jobs:
           files: |
             ed/dist/swift/EdFramework.xcframework.zip
             ed/dist/swift/EdFramework.checksum.txt
-      - name: Checkout onde-ed-swift
+      - name: Checkout ed-swift
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
         uses: actions/checkout@v6
         with:
-          repository: ondeinference/onde-ed-swift
+          repository: ondeinference/ed-swift
           token: ${{ secrets.ED_SWIFT_PAT }}
-          path: onde-ed-swift
+          path: ed-swift
       - name: Update Swift package
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
         working-directory: ${{ github.workspace }}
@@ -151,7 +162,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, pathlib, re
-          package = pathlib.Path("onde-ed-swift/Package.swift")
+          package = pathlib.Path("ed-swift/Package.swift")
           source = package.read_text()
           source, urls = re.subn(r'(let releaseFrameworkURL =\s*\n\s*")([^"]+)(")', rf'\g<1>{os.environ["RELEASE_URL"]}\g<3>', source, count=1)
           source, sums = re.subn(r'(let releaseFrameworkChecksum =\s*\n\s*")([^"]+)(")', rf'\g<1>{os.environ["CHECKSUM"]}\g<3>', source, count=1)
@@ -159,10 +170,10 @@ jobs:
               raise RuntimeError("Package.swift release constants were not found")
           package.write_text(source)
           PY
-          cp ed/dist/swift/Package/Sources/Ed/ed_agent_ffi.swift onde-ed-swift/Sources/Ed/ed_agent_ffi.swift
+          cp ed/dist/swift/Package/Sources/Ed/ed_agent_ffi.swift ed-swift/Sources/Ed/ed_agent_ffi.swift
       - name: Commit and tag Swift package
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
-        working-directory: ${{ github.workspace }}/onde-ed-swift
+        working-directory: ${{ github.workspace }}/ed-swift
         env:
           VERSION: ${{ steps.release.outputs.release_tag }}
         run: |
