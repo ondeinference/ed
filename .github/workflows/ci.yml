@@ -6,7 +6,13 @@ on:
     branches: [main, development]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Keyed on the commit, not the ref: a merge lands the same SHA on development
+  # and then on main, and keying on the ref put those in separate groups, so one
+  # commit paid for two full macOS runs of identical code. Pull requests key on
+  # their number instead, because there `github.sha` is the ephemeral merge
+  # commit and changes with every push to the branch, which would leave
+  # superseded runs alive.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 env:
