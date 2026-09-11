@@ -68,7 +68,7 @@ jobs:
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces --version 0.4.2 --locked
       - name: Dry-run the workspace publish
-        run: cargo workspaces publish --publish-as-is --dry-run --locked --allow-branch "*" --yes
+        run: cargo workspaces publish --publish-as-is --dry-run --locked --yes
 
   publish:
     needs: preflight
@@ -103,7 +103,8 @@ jobs:
         run: |
           cargo workspaces plan --skip-published --json > plan.json
           cat plan.json
-          echo "count=$(python3 -c 'import json; print(len(json.load(open("plan.json"))))')" >> "$GITHUB_OUTPUT"
+          count="$(python3 -c 'import json; print(len(json.load(open("plan.json"))))')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: Authenticate to crates.io
         if: steps.plan.outputs.count != '0'
         id: auth
@@ -113,11 +114,12 @@ jobs:
         env:
           TOKEN: ${{ steps.auth.outputs.token }}
         run: |
+          # --publish-interval gives the sparse index time to serve ed-agent
+          # before ed-agent-tauri's verification build tries to resolve it.
           cargo workspaces publish \
             --publish-as-is \
             --yes \
             --locked \
-            --allow-branch "*" \
             --publish-interval 15 \
             --token "$TOKEN"
       - name: Nothing to publish
