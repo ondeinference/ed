@@ -51,8 +51,6 @@ build_target aarch64-apple-tvos         "TVOS_DEPLOYMENT_TARGET=$TVOS_DEPLOYMENT
 build_target aarch64-apple-tvos-sim     "TVOS_DEPLOYMENT_TARGET=$TVOS_DEPLOYMENT_TARGET" +nightly -Z build-std
 build_target aarch64-apple-visionos     "XROS_DEPLOYMENT_TARGET=$VISIONOS_DEPLOYMENT_TARGET" +nightly -Z build-std
 build_target aarch64-apple-visionos-sim "XROS_DEPLOYMENT_TARGET=$VISIONOS_DEPLOYMENT_TARGET" +nightly -Z build-std
-build_target aarch64-apple-watchos      "WATCHOS_DEPLOYMENT_TARGET=$WATCHOS_DEPLOYMENT_TARGET" +nightly -Z build-std
-build_target aarch64-apple-watchos-sim  "WATCHOS_DEPLOYMENT_TARGET=$WATCHOS_DEPLOYMENT_TARGET" +nightly -Z build-std
 
 "$BINDGEN" generate "$APPLE_TARGET_DIR/aarch64-apple-ios/release/libed_agent_ffi.a" --crate ed_agent_ffi --language swift --out-dir "$PACKAGE_DIR/Sources/Ed"
 cp "$PACKAGE_DIR/Sources/Ed/ed_agent_ffiFFI.h" "$HEADERS_DIR/ed_agent_ffiFFI.h"
@@ -65,8 +63,6 @@ xcodebuild -create-xcframework \
   -library "$APPLE_TARGET_DIR/aarch64-apple-tvos-sim/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
   -library "$APPLE_TARGET_DIR/aarch64-apple-visionos/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
   -library "$APPLE_TARGET_DIR/aarch64-apple-visionos-sim/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
-  -library "$APPLE_TARGET_DIR/aarch64-apple-watchos/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
-  -library "$APPLE_TARGET_DIR/aarch64-apple-watchos-sim/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
   -library "$APPLE_TARGET_DIR/aarch64-apple-darwin/release/libed_agent_ffi.a" -headers "$HEADERS_DIR" \
   -output "$FRAMEWORK_DIR"
 
