@@ -3,7 +3,6 @@ name = "ed-agent"
 description = "Embeddable local-LLM-first chat agent: engine lifecycle, history, and status over the Onde inference SDK."
 keywords = ["llm", "ai", "agent", "local", "on-device"]
 categories = ["api-bindings", "asynchronous"]
-readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
