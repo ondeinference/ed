@@ -25,7 +25,10 @@ log = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "rt"] }
 tauri = { version = "2", features = [] }
-uniffi = { version = "=0.32.1", features = ["tokio"] }
+# Must match on the uniffi version `onde` is built with (=0.31.0). The
+# bindgen extracts metadata that every crate in the staticlib embeds; mixed
+# versions break extraction with "Invalid string data" errors.
+uniffi = { version = "=0.31.0", features = ["tokio"] }
 smbcloud-gresiq-sdk = "0.4.7"
 
 # Internal

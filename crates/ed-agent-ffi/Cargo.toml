@@ -25,4 +25,3 @@ smbcloud-gresiq-sdk.workspace = true
 
 [build-dependencies]
 cc = "1"
-uniffi = { version = "=0.32.1", features = ["build"] }
