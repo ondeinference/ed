@@ -3,7 +3,6 @@ name = "ed-agent-tauri"
 description = "Tauri bindings for Ed: emits chat lifecycle and reply events to the webview."
 keywords = ["tauri", "llm", "ai", "agent", "on-device"]
 categories = ["api-bindings", "gui"]
-readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
