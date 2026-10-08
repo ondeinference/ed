@@ -1759,10 +1759,14 @@ dependencies = [
 name = "ed-agent-tauri"
 version = "1.0.1"
 dependencies = [
+ "async-trait",
  "ed-agent",
  "log",
  "serde",
+ "serde_json",
  "tauri",
+ "tokio",
+ "uuid 1.27.0",
 ]
 
 [[package]]

@@ -30,6 +30,7 @@ tauri = { version = "2", features = [] }
 # versions break extraction with "Invalid string data" errors.
 uniffi = { version = "=0.31.0", features = ["tokio"] }
 smbcloud-gresiq-sdk = "0.4.7"
+uuid = { version = "1", features = ["v4"] }
 
 # Internal
 ed-agent = { version = "1.0.1", path = "crates/ed-agent" }

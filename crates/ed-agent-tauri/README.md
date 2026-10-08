@@ -23,16 +23,26 @@ These events reach the webview: `chat_status_changed`, `chat_reply`,
 `chat_tool_requested`, `chat_approval_requested`, `chat_tool_started`,
 `chat_tool_finished`, `chat_agent_reply`, and `chat_warning`.
 
+## Several conversations
+
+`EdSessions` is the multi-session form. Give it a `SessionStore` and it handles
+switching, the in-memory cache, logout (`reset`) and approvals. Register
+`chat_list_sessions`, `chat_new_session`, `chat_switch_session`,
+`chat_delete_session`, `chat_get_session_history`, `chat_submit` and
+`chat_respond_approval`.
+
+`chat_submit` returns immediately; the answer is a `chat_reply` event
+`{id, session, reply, duration, error}`, preceded by `chat_text_delta
+{session, id, delta}` events. Approvals use `chat_approval_requested
+{request_id, session, call, risk}` and `chat_approval_resolved {request_id}`;
+answer with `chat_respond_approval`. To rewrite the message first, wrap
+`EdSessions::submit_with` in your own command.
+
 Loading a model is deliberately not a command here — which model, and from
 where, is an application decision. Call `Ed::load` or `Ed::load_with` from your
 own command.
 
-Tool calling needs both halves from you. Build the agent with `Ed::with_agent`
-to pass a `ToolExecutor` and an `ApprovalHandler`; `Ed::with_sink` rejects every
-tool and denies every approval. Approvals are not a command either: answering
-one means a webview round trip inside an awaited Rust call, and hosts differ
-enough about how to wire that up that this crate emits
-`chat_approval_requested` and leaves the answering to you.
+Without `EdSessions`, tool calling needs both halves from you: build the agent with `Ed::with_agent` to pass a `ToolExecutor` and an `ApprovalHandler`.
 
 ## Copyright
 
