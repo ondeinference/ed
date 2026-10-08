@@ -38,6 +38,14 @@ pub trait EventSink: Send + Sync + 'static {
     /// pick the result up independently.
     fn replied(&self, _reply: &ChatReply) {}
 
+    /// A piece of the assistant's reply, as it is generated.
+    ///
+    /// Called zero or more times during [`Ed::run`](crate::Ed::run) before
+    /// the final reply is reported. Concatenating the deltas gives the reply
+    /// text. The default does nothing, so sinks written before streaming
+    /// existed keep compiling and keep seeing only the finished reply.
+    fn text_delta(&self, _delta: &str) {}
+
     fn tool_requested(&self, _call: &ToolCall) {}
     fn approval_requested(&self, _request: &ApprovalRequest) {}
     fn tool_started(&self, _call: &ToolCall) {}
@@ -57,3 +65,18 @@ pub use EventSink as StatusSink;
 pub struct NoopSink;
 
 impl EventSink for NoopSink {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Bare;
+    impl EventSink for Bare {}
+
+    #[test]
+    fn text_delta_defaults_to_a_no_op() {
+        // A sink that predates streaming must still compile and not panic.
+        Bare.text_delta("hello");
+        NoopSink.text_delta("hello");
+    }
+}

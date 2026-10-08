@@ -216,6 +216,20 @@ impl From<ChatMessage> for FfiChatMessage {
     }
 }
 
+impl From<FfiChatMessage> for ChatMessage {
+    fn from(value: FfiChatMessage) -> Self {
+        let role = match value.role {
+            FfiChatRole::System => ed_agent::ChatRole::System,
+            FfiChatRole::User => ed_agent::ChatRole::User,
+            FfiChatRole::Assistant => ed_agent::ChatRole::Assistant,
+        };
+        Self {
+            role,
+            content: value.content,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct FfiSamplingConfig {
     pub temperature: Option<f64>,
@@ -333,12 +347,20 @@ pub trait FfiApprovalHandler: Send + Sync {
 #[uniffi::export(callback_interface)]
 pub trait FfiEventListener: Send + Sync {
     fn status_changed(&self, update: FfiStatusUpdate);
+    /// A piece of the reply as it is generated, during `run`.
+    fn text_delta(&self, delta: String);
     fn tool_requested(&self, call: FfiToolCall);
     fn approval_requested(&self, request: FfiApprovalRequest);
     fn tool_started(&self, call: FfiToolCall);
     fn tool_finished(&self, tool_call_id: String, content: String, is_error: bool);
     fn agent_replied(&self, reply: FfiAgentReply);
     fn warning(&self, message: String);
+}
+
+/// Receives a streamed reply from `stream_message`.
+#[uniffi::export(callback_interface)]
+pub trait FfiStreamListener: Send + Sync {
+    fn on_delta(&self, delta: String);
 }
 
 struct ForeignExecutor(Arc<dyn FfiToolExecutor>);
@@ -378,6 +400,10 @@ impl EventSink for FfiSink {
         });
     }
 
+    fn text_delta(&self, delta: &str) {
+        self.0.text_delta(delta.to_owned());
+    }
+
     fn tool_requested(&self, call: &ToolCall) {
         self.0.tool_requested(call.into());
     }
@@ -410,6 +436,34 @@ impl EventSink for FfiSink {
 #[derive(uniffi::Object)]
 pub struct FfiEdAgent {
     inner: Ed<FfiSink>,
+    /// Ends the stream in progress, if any.
+    stream_cancel: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+impl FfiEdAgent {
+    fn build(
+        executor: Box<dyn FfiToolExecutor>,
+        approvals: Box<dyn FfiApprovalHandler>,
+        events: Box<dyn FfiEventListener>,
+        config: Option<FfiAgentConfig>,
+        app_id: Option<String>,
+    ) -> Arc<Self> {
+        let config = config.unwrap_or_default();
+        Arc::new(Self {
+            inner: Ed::with_agent_and_app_id(
+                FfiSink(Arc::from(events)),
+                Arc::new(ForeignExecutor(Arc::from(executor))),
+                Arc::new(ForeignApprovals(Arc::from(approvals))),
+                AgentConfig {
+                    max_tool_rounds: config.max_tool_rounds,
+                    max_tool_output_chars: usize::try_from(config.max_tool_output_chars)
+                        .unwrap_or(usize::MAX),
+                },
+                app_id,
+            ),
+            stream_cancel: std::sync::Mutex::new(None),
+        })
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -421,19 +475,19 @@ impl FfiEdAgent {
         events: Box<dyn FfiEventListener>,
         config: Option<FfiAgentConfig>,
     ) -> Arc<Self> {
-        let config = config.unwrap_or_default();
-        Arc::new(Self {
-            inner: Ed::with_agent(
-                FfiSink(Arc::from(events)),
-                Arc::new(ForeignExecutor(Arc::from(executor))),
-                Arc::new(ForeignApprovals(Arc::from(approvals))),
-                AgentConfig {
-                    max_tool_rounds: config.max_tool_rounds,
-                    max_tool_output_chars: usize::try_from(config.max_tool_output_chars)
-                        .unwrap_or(usize::MAX),
-                },
-            ),
-        })
+        Self::build(executor, approvals, events, config, None)
+    }
+
+    /// Like `new`, with an Onde app id so the engine reports usage under it.
+    #[uniffi::constructor]
+    pub fn new_with_app_id(
+        executor: Box<dyn FfiToolExecutor>,
+        approvals: Box<dyn FfiApprovalHandler>,
+        events: Box<dyn FfiEventListener>,
+        config: Option<FfiAgentConfig>,
+        app_id: Option<String>,
+    ) -> Arc<Self> {
+        Self::build(executor, approvals, events, config, app_id)
     }
 
     pub async fn register_tool(&self, tool: FfiToolDefinition) -> Result<(), FfiEdError> {
@@ -554,6 +608,85 @@ impl FfiEdAgent {
                 reason: "the model returned an empty reply".to_string(),
             }),
         }
+    }
+
+    /// Stream the reply to `message` into `listener`, for plain chat without tools.
+    /// Returns when the reply is complete, on error, or after `cancel_stream`.
+    /// The turn so far stays in history either way.
+    pub async fn stream_message(
+        &self,
+        message: String,
+        listener: Box<dyn FfiStreamListener>,
+    ) -> Result<(), FfiEdError> {
+        let mut stream = self
+            .inner
+            .stream(message)
+            .await
+            .map_err(|error| FfiEdError::Failure {
+                reason: error.to_string(),
+            })?;
+        let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+        *self.stream_cancel.lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel);
+        loop {
+            tokio::select! {
+                next = stream.next() => match next {
+                    Some(Ok(delta)) => listener.on_delta(delta),
+                    Some(Err(error)) => {
+                        return Err(FfiEdError::Failure { reason: error.to_string() });
+                    }
+                    None => return Ok(()),
+                },
+                _ = &mut cancelled => return Ok(()),
+            }
+        }
+    }
+
+    /// Stop the `stream_message` in progress. Does nothing when none is.
+    pub fn cancel_stream(&self) {
+        if let Some(cancel) = self
+            .stream_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = cancel.send(());
+        }
+    }
+
+    /// One-shot generation over `messages`. Leaves the conversation untouched.
+    pub async fn generate(
+        &self,
+        messages: Vec<FfiChatMessage>,
+        sampling: Option<FfiSamplingConfig>,
+    ) -> Result<String, FfiEdError> {
+        self.inner
+            .generate(
+                messages.into_iter().map(Into::into).collect(),
+                sampling.map(Into::into),
+            )
+            .await
+            .map_err(|error| FfiEdError::Failure {
+                reason: error.to_string(),
+            })
+    }
+
+    /// Replace the conversation with `messages`. Needs a loaded model.
+    pub async fn restore_history(&self, messages: Vec<FfiChatMessage>) {
+        self.inner
+            .restore_history(messages.into_iter().map(Into::into).collect())
+            .await;
+    }
+
+    pub async fn set_system_prompt(&self, prompt: String) {
+        self.inner.set_system_prompt(prompt).await;
+    }
+
+    pub async fn clear_system_prompt(&self) {
+        self.inner.clear_system_prompt().await;
+    }
+
+    pub async fn set_sampling(&self, sampling: FfiSamplingConfig) {
+        self.inner.set_sampling(sampling.into()).await;
     }
 
     pub fn cancel(&self) {

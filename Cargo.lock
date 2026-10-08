@@ -1731,6 +1731,7 @@ name = "ed-agent"
 version = "1.0.1"
 dependencies = [
  "async-trait",
+ "futures-core",
  "log",
  "onde",
  "serde",
@@ -1750,6 +1751,7 @@ dependencies = [
  "serde_json",
  "smbcloud-gresiq-sdk",
  "thiserror 2.0.21",
+ "tokio",
  "uniffi",
 ]
 
