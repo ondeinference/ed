@@ -1,0 +1,42 @@
+[package]
+name = "ed-mcp"
+description = "MCP for Onde agents: server configuration, tool namespacing, timeouts, progress and cancellation over rmcp, the official Rust SDK."
+keywords = ["mcp", "llm", "agent", "onde"]
+categories = ["asynchronous"]
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+agent-client-protocol = { workspace = true, optional = true }
+ed-agent = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+http = "1"
+rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+tokio = { workspace = true, features = ["sync", "time", "process", "macros", "io-std", "io-util", "rt"] }
+tokio-util.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[features]
+# Map ACP `session/new` MCP server lists (`McpToolset::connect`, `ServerSpec::from_acp`).
+# Pulls in `agent-client-protocol`; `ed-acp` enables it.
+acp = ["dep:agent-client-protocol"]
+# `McpExecutor`: an `McpToolset` as Ed tools. Pulls in `ed-agent` (and with it `onde`).
+agent = ["dep:ed-agent", "dep:async-trait"]
+# A scriptable MCP server for tests: `echo`, `slow_progress`, `wait_for_cancel`, and the
+# demucs-shaped `list_models` / `separate_stems`.
+test-server = []
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+axum = "0.8"
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+# Run the feature-gated code's tests under a plain `cargo test`.
+ed-mcp = { path = ".", features = ["acp", "agent", "test-server"] }
