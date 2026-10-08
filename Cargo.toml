@@ -6,6 +6,7 @@ members = [
     "crates/ed-agent-tauri",
     "crates/ed-mcp",
     "crates/ed-acp",
+    "crates/ed-acp-tui",
     "crates/ed-acp-testkit",
     "uniffi-bindgen",
 ]
@@ -59,6 +60,7 @@ base64 = "0.23"
 ed-agent = { version = "1.0.1", path = "crates/ed-agent" }
 ed-mcp = { version = "1.0.1", path = "crates/ed-mcp" }
 ed-acp = { version = "1.0.1", path = "crates/ed-acp" }
+ed-acp-tui = { version = "1.0.1", path = "crates/ed-acp-tui" }
 ed-acp-testkit = { version = "1.0.1", path = "crates/ed-acp-testkit" }
 
 # gemm-common (via candle, via onde) depends on sysctl for every
