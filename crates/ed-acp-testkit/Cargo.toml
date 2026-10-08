@@ -1,0 +1,17 @@
+[package]
+name = "ed-acp-testkit"
+description = "Test kit for Onde ACP agents: a mock Onde Cloud endpoint, a raw JSON-RPC client for the agent binary, a test MCP server, the ACP registry probe and the ACP v1 conformance suite."
+keywords = ["acp", "agent", "testing", "conformance", "onde"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+uuid.workspace = true

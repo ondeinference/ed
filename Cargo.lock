@@ -1965,6 +1965,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed-acp-testkit"
+version = "1.0.1"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "uuid 1.27.0",
+]
+
+[[package]]
 name = "ed-agent"
 version = "1.0.1"
 dependencies = [
