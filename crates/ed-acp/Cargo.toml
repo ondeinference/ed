@@ -1,0 +1,32 @@
+[package]
+name = "ed-acp"
+description = "Agent Client Protocol (ACP) v1 server for Onde agents: sessions, auth, the turn loop on Onde Cloud, tool approval, workspace tools and MCP. A product supplies a Profile."
+keywords = ["acp", "agent", "llm", "onde", "mcp"]
+categories = ["asynchronous", "development-tools"]
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ed-mcp = { workspace = true, features = ["acp"] }
+agent-client-protocol.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+directories.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
