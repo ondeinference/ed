@@ -1,0 +1,22 @@
+[package]
+name = "ed-onde-account"
+description = "Onde Inference account client for Onde agents: sign in, list and activate apps, and mint an Onde Cloud API key through the ondeinference.com API. Holds no Onde secrets."
+keywords = ["onde", "agent", "auth", "api-key"]
+categories = ["api-bindings", "authentication"]
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

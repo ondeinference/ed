@@ -84,6 +84,7 @@ The Onde Agent Platform crates, for agents that editors drive over the Agent Cli
 | [`ed-acp`](crates/ed-acp) | An ACP v1 server: sessions, auth, the turn loop on Onde Cloud, tool approval, workspace tools and MCP. A product supplies a `Profile`. |
 | [`ed-acp-tui`](crates/ed-acp-tui) | A terminal UI for any ACP agent. |
 | [`ed-mcp`](crates/ed-mcp) | MCP client glue over `rmcp`, the official Rust SDK: stdio and streamable HTTP servers, bearer tokens, tool namespacing, timeouts, progress and cancellation. With the `agent` feature, `McpExecutor` serves a toolset to Ed as tools. |
+| [`ed-onde-account`](crates/ed-onde-account) | Onde Inference account client: sign in, activate an app and get its Onde Cloud API key through ondeinference.com, with no Onde secrets in the host app. |
 | [`ed-acp-testkit`](crates/ed-acp-testkit) | Mock Onde Cloud endpoint, raw ACP client, the ACP registry probe and the ACP v1 conformance suite. |
 
 Free the intelligence.
