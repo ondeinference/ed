@@ -44,7 +44,7 @@ Metal and CPU backends, tokens out. Ed is the part above it your users touch.
 
 ```toml
 [dependencies]
-ed-agent = "1.1"
+ed-agent = "1.2"
 ```
 
 ```rust
