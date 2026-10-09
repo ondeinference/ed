@@ -12,7 +12,7 @@ use agent_client_protocol::schema::v1::{
     SessionDeleteCapabilities, SessionListCapabilities, SessionResumeCapabilities,
     SetSessionConfigOptionRequest,
 };
-use agent_client_protocol::{Agent, Stdio};
+use agent_client_protocol::{Agent, ConnectTo, Stdio};
 
 use crate::agent::{self, AcpServer};
 use crate::{AgentInfo, Profile, cli};
@@ -41,6 +41,23 @@ impl ServeOptions {
 pub async fn serve_stdio(
     profile: Arc<dyn Profile>,
     opts: ServeOptions,
+) -> agent_client_protocol::Result<()> {
+    serve(profile, opts, Stdio::new()).await
+}
+
+/// Serve ACP over any transport until the client disconnects, then stop every MCP server.
+///
+/// This is how a host embeds the agent in its own process instead of launching it as a
+/// subprocess, for example an app in the macOS App Store sandbox: connect it to
+/// [`Channel::duplex`](agent_client_protocol::Channel::duplex) and run an ACP client on the
+/// other end.
+///
+/// One call serves one connection: the transport is consumed, and the future resolves when
+/// that client hangs up. To serve another client, call `serve` again with a new transport.
+pub async fn serve(
+    profile: Arc<dyn Profile>,
+    opts: ServeOptions,
+    transport: impl ConnectTo<Agent> + 'static,
 ) -> agent_client_protocol::Result<()> {
     let info = profile.info();
     let prompt_caps = profile.prompt_capabilities();
@@ -277,7 +294,7 @@ pub async fn serve_stdio(
             },
             agent_client_protocol::on_receive_notification!(),
         )
-        .connect_to(Stdio::new())
+        .connect_to(transport)
         .await;
     // The editor went away: stop MCP servers instead of leaving them to be orphaned.
     agent.shutdown().await;

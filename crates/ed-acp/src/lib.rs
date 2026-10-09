@@ -16,6 +16,21 @@
 //! let profile = Arc::new(MyProfile);
 //! ed_acp::serve_stdio(profile, ServeOptions::from_env(&info)).await?;
 //! ```
+//!
+//! To embed the agent in a host process instead (an app sandbox that can't launch a
+//! subprocess, say), serve it over an in-memory channel and run an ACP client on the other end:
+//!
+//! ```ignore
+//! let (agent_end, client_end) = agent_client_protocol::Channel::duplex();
+//! tokio::spawn(ed_acp::serve(profile, opts, agent_end));
+//! agent_client_protocol::Client
+//!     .builder()
+//!     .connect_with(client_end, |conn| async move {
+//!         conn.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
+//!         Ok(())
+//!     })
+//!     .await?;
+//! ```
 
 mod agent;
 pub mod cli;
@@ -38,7 +53,7 @@ pub use agent_client_protocol;
 pub use content::AudioHints;
 pub use ed_mcp;
 pub use llm::{LlmConfig, LlmEnv, Provider};
-pub use server::{ServeOptions, serve_stdio};
+pub use server::{ServeOptions, serve, serve_stdio};
 pub use tools::{
     DescribeCtx, ToolCtx, ToolOutcome, Toolset, absolutize, function_def, normalize, resolve_in,
     truncate,
