@@ -4,7 +4,7 @@ An [Agent Client Protocol](https://agentclientprotocol.com) v1 server for Onde a
 
 It is the part of an ACP agent that is the same for every product: `initialize` and version
 negotiation, auth, durable sessions, the model picker, prompt content, the turn loop against Onde
-Cloud with streaming, tool approval, workspace tools routed through the client, and MCP servers
+Cloud (or any OpenAI API compatible endpoint) with streaming, tool approval, workspace tools routed through the client, and MCP servers
 (stdio and streamable HTTP) through [`ed-mcp`](https://crates.io/crates/ed-mcp). A product
 supplies a `Profile`: its name, prompt, tools, slash commands and built-in MCP servers.
 

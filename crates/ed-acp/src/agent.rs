@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
@@ -31,7 +31,7 @@ use crate::content as prompt;
 use crate::llm::{Delta, LlmClient, LlmConfig, LlmEnv};
 use crate::store::{SessionStore, StoredSession};
 use crate::tools::{self, ToolCtx, ToolOutcome, Toolset, absolutize, normalize};
-use crate::{Profile, PromptCtx, SessionCtx};
+use crate::{CommandCtx, Profile, PromptCtx, SessionCtx};
 
 const MAX_TURNS: usize = 50;
 /// Id of the session config option that selects the model.
@@ -44,12 +44,14 @@ const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
 pub const AUTH_METHOD_ID: &str = "terminal-setup";
 /// Cap on the sessions returned by `session/list`.
 const MAX_LISTED: usize = 200;
+/// How long `run_command` may run when `<PREFIX>_COMMAND_TIMEOUT_SECS` is unset.
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The terminal auth method: clients run `<agent> --setup`.
 pub fn auth_methods() -> Vec<AuthMethod> {
     vec![AuthMethod::Terminal(
         AuthMethodTerminal::new(AUTH_METHOD_ID, "Run in terminal")
-            .description("Interactive setup: store your Onde Inference API key")
+            .description("Interactive setup: choose a provider and store an API key")
             .args(vec!["--setup".into()]),
     )]
 }
@@ -70,7 +72,7 @@ pub fn supports_terminal_auth(caps: &ClientCapabilities) -> bool {
 
 pub fn auth_required_error(agent: &str) -> agent_client_protocol::Error {
     agent_client_protocol::Error::auth_required().data(format!(
-        "No Onde API key configured. Authenticate with the terminal method (`{agent} --setup`)."
+        "No API key configured. Authenticate with the terminal method (`{agent} --setup`)."
     ))
 }
 
@@ -333,7 +335,10 @@ impl AcpServer {
         let fresh = LlmConfig::from_env(&self.env);
         let changed = fresh != *self.llm().config();
         if changed {
-            tracing::info!("credentials changed; reloading the Onde client");
+            tracing::info!(
+                "credentials changed; reloading provider {}",
+                fresh.provider.name()
+            );
             *self.llm.lock().unwrap() = LlmClient::new(fresh);
             *self.models.lock().await = None;
         }
@@ -355,20 +360,26 @@ impl AcpServer {
         }
     }
 
-    /// `logout`: remove the stored key and forget it. A key exported in the agent's own
-    /// environment can't be removed from here and keeps the agent signed in.
+    /// `logout`: remove the stored key and forget it. Every file the key may be loaded from
+    /// goes, or the agent would still be signed in afterwards; one failed removal doesn't stop
+    /// the others. A key exported in the agent's own environment can't be removed from here
+    /// and keeps the agent signed in.
     pub async fn logout(&self) -> agent_client_protocol::Result<LogoutResponse> {
-        let removed = match self.env.config_file() {
-            Some(path) => match std::fs::remove_file(&path) {
+        let failures: Vec<String> = self
+            .env
+            .config_file_candidates()
+            .into_iter()
+            .filter_map(|path| match std::fs::remove_file(&path) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                    Err(format!("removing {}: {e}", path.display()))
+                    Some(format!("removing {}: {e}", path.display()))
                 }
-                _ => Ok(()),
-            },
-            None => Ok(()),
-        };
+                _ => None,
+            })
+            .collect();
         self.refresh_credentials().await;
-        removed.map_err(|e| agent_client_protocol::Error::internal_error().data(e))?;
+        if !failures.is_empty() {
+            return Err(agent_client_protocol::Error::internal_error().data(failures.join("; ")));
+        }
         Ok(LogoutResponse::new())
     }
 
@@ -1003,6 +1014,15 @@ impl AcpServer {
         if let Err(e) = self.restore(&request.session_id).await {
             return responder.respond_with_error(e);
         }
+        if let Some(reply) = self.answer_slash(&request).await {
+            connection.send_notification(SessionNotification::new(
+                request.session_id.clone(),
+                SessionUpdate::AgentMessageChunk(
+                    ContentChunk::new(reply.into()).message_id(new_message_id()),
+                ),
+            ))?;
+            return responder.respond(PromptResponse::new(StopReason::EndTurn));
+        }
         match self.run_turn(request, connection).await {
             Ok(stop) => responder.respond(PromptResponse::new(stop)),
             Err(e) if e.downcast_ref::<UnknownSession>().is_some() => {
@@ -1012,6 +1032,28 @@ impl AcpServer {
                 agent_client_protocol::Error::internal_error().data(format!("{e:#}")),
             ),
         }
+    }
+
+    /// The profile's reply to a slash command it answers without the model, for a prompt that
+    /// is a single text block. The reply is not added to the conversation.
+    async fn answer_slash(&self, request: &PromptRequest) -> Option<String> {
+        let [ContentBlock::Text(text)] = request.prompt.as_slice() else {
+            return None;
+        };
+        if !text.text.trim_start().starts_with('/') {
+            return None;
+        }
+        let (model, _) = self.session_settings(&request.session_id)?;
+        let models = self.models().await;
+        let mcp = self.session_mcp(&request.session_id);
+        self.profile.answer_slash(
+            &text.text,
+            &CommandCtx {
+                mcp: &mcp,
+                model: &model,
+                models: &models,
+            },
+        )
     }
 
     async fn run_turn(
@@ -1093,6 +1135,11 @@ impl AcpServer {
             always_allowed,
             always_rejected,
             mcp,
+            command_timeout: std::env::var(self.env.var("COMMAND_TIMEOUT_SECS"))
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .map(Duration::from_secs)
+                .unwrap_or(DEFAULT_COMMAND_TIMEOUT),
         };
         let result = self.turn(&ctx, &model, &mut messages, &blocks).await;
 

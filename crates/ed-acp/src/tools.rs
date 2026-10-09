@@ -41,6 +41,8 @@ pub struct ToolCtx {
     pub always_rejected: Arc<Mutex<HashSet<String>>>,
     /// Tools from MCP servers available to this session.
     pub mcp: Arc<McpToolset>,
+    /// How long `run_command` may run: `<PREFIX>_COMMAND_TIMEOUT_SECS`, default 120 seconds.
+    pub command_timeout: std::time::Duration,
 }
 
 /// What a tool call produced.

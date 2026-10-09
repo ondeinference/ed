@@ -131,6 +131,30 @@ async fn connects_lists_and_calls_with_a_bearer_token() {
 }
 
 #[tokio::test]
+async fn a_connection_lists_and_calls_tools_by_their_own_names() {
+    let url = serve().await;
+    let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
+    let conn = Connection::connect(&spec, &client(), Duration::from_secs(5))
+        .await
+        .unwrap();
+
+    let mut names: Vec<_> = conn.tools().iter().map(|t| t.name.to_string()).collect();
+    names.sort();
+    assert_eq!(names, ["list_messages", "send_message", "whoami"]);
+
+    let result = conn
+        .call_tool("whoami", json!({}), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(result["content"][0]["text"], "ran whoami");
+    let err = conn
+        .call_tool("whoami", json!([1]), Duration::from_secs(5))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("JSON object"), "{err:#}");
+}
+
+#[tokio::test]
 async fn a_wrong_bearer_token_is_rejected() {
     let url = serve().await;
     let spec = ServerSpec::http("mail", url).with_bearer("nope");
