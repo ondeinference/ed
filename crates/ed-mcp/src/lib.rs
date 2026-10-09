@@ -312,18 +312,32 @@ impl Connection {
         &self.name
     }
 
+    /// The tools the server listed when it connected, under their own names.
+    pub fn tools(&self) -> &[Tool] {
+        &self.tools
+    }
+
     /// Call a tool on this server directly, outside any turn (for example to build a
     /// permission prompt). Answers `None` on any failure or after `timeout`.
     pub async fn call_raw(&self, tool: &str, args: Value, timeout: Duration) -> Option<Value> {
+        self.call_tool(tool, args, timeout).await.ok()
+    }
+
+    /// Call `tool` by its name on this server and return the `CallToolResult` as JSON. A
+    /// result with `isError: true` is `Ok`; a transport or protocol failure, or no answer
+    /// within `timeout`, is an `Err` that says which.
+    pub async fn call_tool(&self, tool: &str, args: Value, timeout: Duration) -> Result<Value> {
         let mut params = CallToolRequestParams::new(tool.to_string());
-        if let Value::Object(map) = args {
-            params = params.with_arguments(map);
+        match args {
+            Value::Object(map) => params = params.with_arguments(map),
+            Value::Null => {}
+            _ => bail!("tool arguments must be a JSON object"),
         }
         let result = tokio::time::timeout(timeout, self.service.peer().call_tool(params))
             .await
-            .ok()?
-            .ok()?;
-        serde_json::to_value(result).ok()
+            .map_err(|_| anyhow!("timed out after {}s", timeout.as_secs()))?
+            .map_err(|e| anyhow!("{e}"))?;
+        Ok(serde_json::to_value(result)?)
     }
 
     async fn close(mut self) {
