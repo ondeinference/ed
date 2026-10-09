@@ -15,6 +15,8 @@ const TOKEN: &str = "jwt-123";
 #[derive(Default)]
 struct Mock {
     apps: Vec<Value>,
+    /// An app another caller creates just before this server handles a `POST`.
+    rival: Option<Value>,
     /// Every `(method, path, env)` the server saw.
     calls: Vec<String>,
 }
@@ -35,6 +37,7 @@ fn authorized(headers: &HeaderMap) -> bool {
 async fn serve(apps: Vec<Value>) -> (OndeAccount, Shared) {
     let state: Shared = Arc::new(Mutex::new(Mock {
         apps,
+        rival: None,
         calls: vec![],
     }));
 
@@ -88,6 +91,9 @@ async fn serve(apps: Vec<Value>) -> (OndeAccount, Shared) {
     async fn create(State(s): State<Shared>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
         let mut s = s.lock().unwrap();
         s.calls.push("create".into());
+        if let Some(rival) = s.rival.take() {
+            s.apps.push(rival);
+        }
         let created = app(
             "new-1",
             body["gresiq_app"]["name"].as_str().unwrap(),
@@ -213,6 +219,26 @@ async fn ensure_key_creates_then_activates_when_none_exists() {
     // A second call finds it instead of creating another.
     account.ensure_key(&token, "KaroKowe").await.unwrap();
     assert_eq!(state.lock().unwrap().calls.len(), 2);
+}
+
+#[tokio::test]
+async fn ensure_key_converges_when_a_create_races() {
+    let (account, state) = serve(vec![]).await;
+    // The other caller's create lands first, so its app has the lower id.
+    state.lock().unwrap().rival = Some(app("7", "KaroKowe", "provisioning"));
+    let key = account
+        .ensure_key(&AccessToken::new(TOKEN), "KaroKowe")
+        .await
+        .unwrap();
+    assert_eq!(
+        key.as_str(),
+        "7:sec-7",
+        "the oldest app wins, not the one just created"
+    );
+    assert_eq!(
+        state.lock().unwrap().calls,
+        vec!["create".to_owned(), r#"activate 7 "active""#.to_owned()]
+    );
 }
 
 #[tokio::test]

@@ -304,20 +304,24 @@ impl OndeAccount {
     }
 
     /// Reuse the user's app named `name` (or create it), activate it if needed and return
-    /// its key. Safe to call again: it never creates a second app with the same name.
+    /// its key. Calls made one after another reuse the app. Nothing makes list-then-create
+    /// atomic, so two concurrent first calls can each create one; both then list again and
+    /// settle on the same (oldest) app, so they return the same key. The extra app stays in
+    /// the account, because this client has no delete call.
     pub async fn ensure_key(&self, token: &AccessToken, name: &str) -> Result<ApiKey> {
         let apps = self.apps(token).await?;
-        let named = || apps.iter().filter(|a| a.name == name);
-        let existing = named()
-            .find(|a| a.status == AppStatus::Active)
-            .or_else(|| named().find(|a| a.status != AppStatus::Suspended))
-            .cloned();
-
-        let mut app = match existing {
-            Some(app) => app,
+        let mut app = match pick(&apps, name) {
+            Some(app) => app.clone(),
             // Whatever is left under this name is suspended.
-            None if named().next().is_some() => return Err(Error::Suspended(name.to_owned())),
-            None => self.create_app(token, name).await?,
+            None if apps.iter().any(|a| a.name == name) => {
+                return Err(Error::Suspended(name.to_owned()));
+            }
+            None => {
+                let created = self.create_app(token, name).await?;
+                // Another caller may have created one too: settle on the same app they do.
+                let apps = self.apps(token).await?;
+                pick(&apps, name).cloned().unwrap_or(created)
+            }
         };
         if app.status != AppStatus::Active {
             app = self.activate(token, &app.id).await?;
@@ -390,4 +394,20 @@ fn opt_string_or_number<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String
             "expected an id, got {other}"
         ))),
     }
+}
+
+/// The app every caller agrees on among those named `name`: an active one before a
+/// provisioning one, then the lowest id (numeric when it parses). Suspended apps never win.
+fn pick<'a>(apps: &'a [OndeApp], name: &str) -> Option<&'a OndeApp> {
+    apps.iter()
+        .filter(|a| a.name == name && a.status != AppStatus::Suspended)
+        .min_by_key(|a| {
+            let numeric = a.id.parse::<u64>().ok();
+            (
+                a.status != AppStatus::Active,
+                numeric.is_none(),
+                numeric,
+                a.id.as_str(),
+            )
+        })
 }
