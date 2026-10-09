@@ -73,3 +73,6 @@ ed-acp-testkit = { version = "1.2.1", path = "crates/ed-acp-testkit" }
 # the graph is silently ignored.
 [patch.crates-io]
 sysctl = { git = "https://github.com/setoelkahfi/sysctl-rs.git", branch = "feature/watchos-0.6" }
+# ChatEngine::complete (onde 1.4) is not on crates.io yet. Remove once it is, and require
+# onde 1.4 above.
+onde = { path = "../onde" }

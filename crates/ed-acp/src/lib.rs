@@ -36,6 +36,7 @@ mod agent;
 pub mod cli;
 pub mod content;
 pub mod llm;
+mod local;
 mod server;
 pub mod store;
 pub mod tools;

@@ -11,8 +11,14 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+# On-device inference with onde (`<PREFIX>_PROVIDER=local`). Off by default: it builds
+# mistral.rs and its model runtime, which a cloud-only agent doesn't need.
+local = ["dep:onde"]
+
 [dependencies]
 ed-mcp = { workspace = true, features = ["acp"] }
+onde = { workspace = true, optional = true }
 agent-client-protocol.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
@@ -30,3 +36,5 @@ base64.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# Turn the `local` feature on for this crate's own tests.
+ed-acp = { path = ".", features = ["local"] }
