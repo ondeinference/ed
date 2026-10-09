@@ -4,9 +4,9 @@
 //! version negotiation, terminal auth, `authenticate` and `logout`, durable sessions (`list`,
 //! `load` with full replay, `resume`, `close`, `delete`), the model picker and auto-approve
 //! config options, slash-command advertisement, prompt content (embedded and linked files,
-//! images, audio), the turn loop against Onde Cloud with streaming, message ids and usage,
-//! tool approval, the workspace tools routed through the client's `fs/*` and `terminal/*`, and
-//! MCP servers through [`ed_mcp`].
+//! images, audio), the turn loop against Onde Cloud (or any OpenAI API compatible endpoint)
+//! with streaming, message ids and usage, tool approval, the workspace tools routed through the
+//! client's `fs/*` and `terminal/*`, and MCP servers through [`ed_mcp`].
 //!
 //! A product supplies a [`Profile`]: its name, prompt, tools, slash commands and built-in MCP
 //! servers. Everything in the Onde Agent Platform §5.5 conformance table is implemented here
@@ -37,7 +37,7 @@ use serde_json::Value;
 pub use agent_client_protocol;
 pub use content::AudioHints;
 pub use ed_mcp;
-pub use llm::{LlmConfig, LlmEnv};
+pub use llm::{LlmConfig, LlmEnv, Provider};
 pub use server::{ServeOptions, serve_stdio};
 pub use tools::{
     DescribeCtx, ToolCtx, ToolOutcome, Toolset, absolutize, function_def, normalize, resolve_in,
@@ -74,6 +74,15 @@ pub struct SessionCtx<'a> {
     pub mcp: &'a McpToolset,
 }
 
+/// What a slash command answered without the model can report.
+pub struct CommandCtx<'a> {
+    pub mcp: &'a McpToolset,
+    /// The session's model.
+    pub model: &'a str,
+    /// The models offered in the model picker.
+    pub models: &'a [String],
+}
+
 /// An MCP call awaiting approval.
 pub struct McpCall<'a> {
     pub tool: &'a McpTool,
@@ -103,6 +112,12 @@ pub trait Profile: Send + Sync + 'static {
     /// When `text` starts with one of this profile's commands, the instruction the model gets
     /// in its place.
     fn expand_slash(&self, _text: &str, _ctx: &SessionCtx<'_>) -> Option<String> {
+        None
+    }
+
+    /// When `text` is one of this profile's commands that needs no model (`/models`, `/setup`),
+    /// the reply shown in the thread. It is not added to the conversation.
+    fn answer_slash(&self, _text: &str, _ctx: &CommandCtx<'_>) -> Option<String> {
         None
     }
 

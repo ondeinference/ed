@@ -1,12 +1,14 @@
-//! Command-line pieces every Onde agent shares: `--setup` (store and verify the Onde key),
-//! `--list-models`, flag parsing and logging.
+//! Command-line pieces every Onde agent shares: `--setup` (choose a provider, store and verify
+//! its key), `--list-models`, flag parsing and logging.
 
 use std::io::IsTerminal;
 
 use anyhow::Context;
 
 use crate::AgentInfo;
-use crate::llm::{LlmClient, LlmConfig, LlmEnv};
+use crate::llm::{
+    LlmClient, LlmConfig, LlmEnv, OPENAI_DEFAULT_BASE_URL, OPENAI_DEFAULT_MODEL, Provider,
+};
 
 /// Log to stderr, filtered by `RUST_LOG`. Stdout is reserved for ACP.
 pub fn init_logging() {
@@ -32,47 +34,98 @@ pub fn valid_onde_key(key: &str) -> bool {
 
 /// `env` file content with `ONDE_API_KEY` set, keeping any other lines.
 pub fn with_api_key(existing: &str, key: &str) -> String {
+    with_vars(existing, &[("ONDE_API_KEY".to_string(), key.to_string())])
+}
+
+/// `env` file content with each of `vars` set, replacing earlier values and keeping any
+/// other lines.
+pub fn with_vars(existing: &str, vars: &[(String, String)]) -> String {
     let mut lines: Vec<String> = existing
         .lines()
         .filter(|l| {
             let l = l.trim().strip_prefix("export ").unwrap_or(l.trim());
-            !l.starts_with("ONDE_API_KEY=")
+            !vars.iter().any(|(k, _)| l.starts_with(&format!("{k}=")))
         })
         .map(String::from)
         .collect();
-    lines.push(format!("ONDE_API_KEY={key}"));
+    lines.extend(vars.iter().map(|(k, v)| format!("{k}={v}")));
     lines.join("\n") + "\n"
 }
 
-/// Interactive first-run setup (`--setup`): prompt for the Onde key, verify it against Onde
-/// Cloud, and store it in the platform config dir (`config_dir()/env`, mode 0600).
+/// Interactive first-run setup (`--setup`): choose Onde Inference or an OpenAI API compatible
+/// endpoint, prompt for its key, verify it, and store it in the platform config dir
+/// (`config_dir()/env`, mode 0600).
 pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
     use std::io::Write;
 
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("--setup needs an interactive terminal");
     }
-    println!("{} setup\n", info.name);
-    println!("Get credentials: sign in at https://ondeinference.com/root/login,");
-    println!("register an app and assign a model. Your key is \"app-id:app-secret\".\n");
-    let key = loop {
-        print!("Paste your ONDE_API_KEY: ");
+    let prompt_line = |label: &str| -> anyhow::Result<String> {
+        print!("{label}");
         std::io::stdout().flush()?;
         let mut line = String::new();
         if std::io::stdin().read_line(&mut line)? == 0 {
             anyhow::bail!("no input");
         }
-        let key = line.trim().to_string();
-        if valid_onde_key(&key) {
-            break key;
-        }
-        println!("Onde credentials look like \"app-id:app-secret\" (exactly one colon).");
+        Ok(line.trim().to_string())
     };
 
-    // Verify before writing anything.
-    let mut config = LlmConfig::from_env(&info.env);
-    config.api_key = Some(key.clone());
-    print!("Verifying the key with Onde Cloud… ");
+    println!("{} setup\n", info.name);
+    println!("  1) Onde Inference                    (ONDE_API_KEY)");
+    println!(
+        "  2) OpenAI API compatible endpoint    (OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL)"
+    );
+    let provider = loop {
+        match prompt_line("\nChoose a provider [1-2]: ")?.as_str() {
+            "" | "1" | "onde" => break Provider::Onde,
+            "2" | "openai" => break Provider::OpenAi,
+            _ => println!("Please enter 1 or 2."),
+        }
+    };
+    let mut vars = vec![(info.env.var("PROVIDER"), provider.name().to_string())];
+    match provider {
+        Provider::Onde => {
+            println!("\nGet credentials: sign in at https://ondeinference.com/root/login,");
+            println!("register an app and assign a model. Your key is \"app-id:app-secret\".\n");
+        }
+        // A generic endpoint also needs its URL and a model that supports tool calling.
+        Provider::OpenAi => {
+            for (var, label, default) in [
+                ("OPENAI_BASE_URL", "Base URL", OPENAI_DEFAULT_BASE_URL),
+                ("OPENAI_MODEL", "Model", OPENAI_DEFAULT_MODEL),
+            ] {
+                let value = prompt_line(&format!("{label} [{default}]: "))?;
+                let value = if value.is_empty() {
+                    default.to_string()
+                } else {
+                    value
+                };
+                vars.push((var.to_string(), value));
+            }
+        }
+    }
+    let key_var = provider.key_var();
+    let key = loop {
+        let key = prompt_line(&format!("Paste your {key_var}: "))?;
+        match provider {
+            Provider::Onde if !valid_onde_key(&key) => {
+                println!("Onde credentials look like \"app-id:app-secret\" (exactly one colon).")
+            }
+            _ if key.is_empty() => println!("Key must not be empty."),
+            _ => break key,
+        }
+    };
+    vars.push((key_var.to_string(), key));
+
+    // Verify before writing anything: the new values win over the environment.
+    let config = LlmConfig::from_lookup(&info.env, |name| {
+        vars.iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+            .or_else(|| std::env::var(name).ok())
+    });
+    print!("Verifying the key with {}… ", provider.display_name());
     std::io::stdout().flush()?;
     match LlmClient::new(config).check_auth().await {
         Ok(()) => println!("OK"),
@@ -86,7 +139,7 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("env");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    std::fs::write(&path, with_api_key(&existing, &key))?;
+    std::fs::write(&path, with_vars(&existing, &vars))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -137,5 +190,13 @@ mod tests {
         let out = with_api_key("# hi\nX_MODEL=m\nexport ONDE_API_KEY=old:old\n", "new:key");
         assert_eq!(out, "# hi\nX_MODEL=m\nONDE_API_KEY=new:key\n");
         assert_eq!(with_api_key("", "a:b"), "ONDE_API_KEY=a:b\n");
+        let vars = [
+            ("X_PROVIDER".to_string(), "openai".to_string()),
+            ("OPENAI_API_KEY".to_string(), "sk".to_string()),
+        ];
+        assert_eq!(
+            with_vars("X_PROVIDER=onde\nONDE_API_KEY=a:b\n", &vars),
+            "ONDE_API_KEY=a:b\nX_PROVIDER=openai\nOPENAI_API_KEY=sk\n"
+        );
     }
 }

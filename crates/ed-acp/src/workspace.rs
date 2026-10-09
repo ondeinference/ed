@@ -4,7 +4,6 @@
 //! optional `root` for multi-root workspaces. Writes and commands ask for approval.
 
 use std::path::Path;
-use std::time::Duration;
 
 use agent_client_protocol::ErrorCode;
 use agent_client_protocol::schema::v1::{
@@ -21,8 +20,6 @@ use crate::tools::{
     DescribeCtx, MAX_OUTPUT_BYTES, ToolCtx, ToolOutcome, Toolset, absolutize, base_for,
     function_def, resolve_in, truncate,
 };
-
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The workspace tools as a [`Toolset`].
 #[derive(Debug, Default, Clone, Copy)]
@@ -385,7 +382,7 @@ impl ToolCtx {
             .block_task();
         let exit = tokio::select! {
             r = wait => Some(r?.exit_status),
-            () = tokio::time::sleep(COMMAND_TIMEOUT) => None,
+            () = tokio::time::sleep(self.command_timeout) => None,
             () = self.cancel.cancelled() => None,
         };
         if exit.is_none() {
@@ -413,7 +410,7 @@ impl ToolCtx {
                 _ => "exited".into(),
             },
             None if self.cancel.is_cancelled() => "cancelled".into(),
-            None => format!("timed out after {}s", COMMAND_TIMEOUT.as_secs()),
+            None => format!("timed out after {}s", self.command_timeout.as_secs()),
         };
         let failed = !matches!(exit.as_ref().and_then(|s| s.exit_code), Some(0));
         let trunc = if output.truncated {
@@ -438,9 +435,9 @@ impl ToolCtx {
             .kill_on_drop(true)
             .output();
         let out = tokio::select! {
-            r = tokio::time::timeout(COMMAND_TIMEOUT, child) => match r {
+            r = tokio::time::timeout(self.command_timeout, child) => match r {
                 Ok(r) => r?,
-                Err(_) => return Ok(ToolOutcome::err(format!("Command timed out after {}s", COMMAND_TIMEOUT.as_secs()))),
+                Err(_) => return Ok(ToolOutcome::err(format!("Command timed out after {}s", self.command_timeout.as_secs()))),
             },
             () = self.cancel.cancelled() => return Ok(ToolOutcome::err("Command cancelled")),
         };

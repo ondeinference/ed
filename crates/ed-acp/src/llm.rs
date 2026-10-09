@@ -1,5 +1,6 @@
-//! Streaming client for Onde Cloud's OpenAI-compatible `/chat/completions` endpoint: text and
-//! reasoning deltas, tool-call accumulation, token usage, and `GET /models`.
+//! Streaming client for OpenAI-compatible `/chat/completions` endpoints (Onde Cloud by default,
+//! or any other with the `OPENAI_*` variables): text and reasoning deltas, tool-call
+//! accumulation, token usage, and `GET /models`.
 //!
 //! Superseded by `onde-backend` once it exists (Onde Agent Platform §5.2); the agent depends
 //! only on this module's public types so that swap stays local.
@@ -15,6 +16,54 @@ pub const DEFAULT_BASE_URL: &str = "https://cloud.ondeinference.com/v1";
 pub const DEFAULT_MODEL: &str = "onde-kkk";
 /// The credential every Onde agent reads: `app-id:app-secret`.
 pub const API_KEY_VAR: &str = "ONDE_API_KEY";
+/// Base URL of a generic OpenAI API compatible endpoint when `OPENAI_BASE_URL` is unset.
+pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+/// Model for a generic endpoint when neither `<PREFIX>_MODEL` nor `OPENAI_MODEL` is set.
+pub const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
+
+/// Where completions come from. Both speak the OpenAI chat completions API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// Onde Cloud: `ONDE_API_KEY` (`app-id:app-secret`), `<PREFIX>_BASE_URL` or
+    /// `ONDE_BASE_URL` for a local or staging deployment.
+    Onde,
+    /// Any OpenAI API compatible endpoint: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`.
+    OpenAi,
+}
+
+impl Provider {
+    /// `onde` or `openai`, as written to `<PREFIX>_PROVIDER`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Onde => "onde",
+            Self::OpenAi => "openai",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "onde" | "onde-cloud" | "ondeinference" => Some(Self::Onde),
+            "openai" => Some(Self::OpenAi),
+            _ => None,
+        }
+    }
+
+    /// The variable holding this provider's key.
+    pub fn key_var(self) -> &'static str {
+        match self {
+            Self::Onde => API_KEY_VAR,
+            Self::OpenAi => "OPENAI_API_KEY",
+        }
+    }
+
+    /// Name shown to people, e.g. in setup and errors.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Onde => "Onde Inference",
+            Self::OpenAi => "the OpenAI API compatible endpoint",
+        }
+    }
+}
 
 /// Where an agent's settings come from: `<PREFIX>_BASE_URL`, `<PREFIX>_MODEL` and
 /// `<PREFIX>_DATA_DIR` in the environment, then `<config dir>/<dir_name>/env`.
@@ -54,6 +103,28 @@ impl LlmEnv {
         self.config_dir().map(|d| d.join("env"))
     }
 
+    /// Where the stored `env` file is looked for, most preferred first: [`Self::config_file`],
+    /// then `~/.config/<dir_name>/env`, where agents on macOS kept it before they moved to the
+    /// platform directory. Only the first is used when `<PREFIX>_DATA_DIR` is set.
+    pub fn config_file_candidates(&self) -> Vec<std::path::PathBuf> {
+        let mut paths: Vec<std::path::PathBuf> = self.config_file().into_iter().collect();
+        let overridden = std::env::var_os(self.var("DATA_DIR")).is_some_and(|v| !v.is_empty());
+        #[cfg(not(target_os = "windows"))]
+        if !overridden && let Some(dirs) = directories::BaseDirs::new() {
+            let legacy = dirs
+                .home_dir()
+                .join(".config")
+                .join(self.dir_name)
+                .join("env");
+            if !paths.contains(&legacy) {
+                paths.push(legacy);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        let _ = overridden;
+        paths
+    }
+
     /// Where durable state (sessions, audio scratch) lives. Same directory as the `env` file.
     pub fn data_dir(&self) -> std::path::PathBuf {
         self.config_dir()
@@ -63,8 +134,9 @@ impl LlmEnv {
     fn load_file_vars(&self) -> std::collections::HashMap<String, String> {
         let mut vars = std::collections::HashMap::new();
         let content = self
-            .config_file()
-            .and_then(|p| std::fs::read_to_string(p).ok());
+            .config_file_candidates()
+            .iter()
+            .find_map(|p| std::fs::read_to_string(p).ok());
         let Some(content) = content else {
             return vars;
         };
@@ -91,15 +163,24 @@ impl LlmEnv {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfig {
+    pub provider: Provider,
     pub base_url: String,
-    /// Onde credentials: `app-id:app-secret`, sent as the bearer token.
+    /// Sent as the bearer token. For Onde Cloud, `app-id:app-secret`.
     pub api_key: Option<String>,
     pub model: String,
 }
 
 impl LlmConfig {
-    /// `ONDE_API_KEY` from the environment, falling back to the stored `env` file.
-    /// `<PREFIX>_BASE_URL` and `<PREFIX>_MODEL` override the endpoint and default model.
+    /// Settings from the environment, falling back to the stored `env` file.
+    ///
+    /// The provider is `<PREFIX>_PROVIDER` (`onde` or `openai`) when set, else Onde Cloud
+    /// whenever `ONDE_API_KEY` is set, else a generic endpoint when `OPENAI_API_KEY` is, else
+    /// Onde Cloud. Onde Cloud reads only `ONDE_API_KEY`, and its own URL unless
+    /// `<PREFIX>_BASE_URL` or `ONDE_BASE_URL` names another deployment, so stray `OPENAI_*`
+    /// variables can't redirect it or send it the wrong key. A generic endpoint reads
+    /// `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL`. `<PREFIX>_MODEL` picks the
+    /// model for either.
+    ///
     /// Empty values are ignored: GUI launchers (e.g. Zed via launchd) often export
     /// variables set to "", which must not mask the config file.
     pub fn from_env(env: &LlmEnv) -> Self {
@@ -115,13 +196,34 @@ impl LlmConfig {
     /// Build a config from an arbitrary variable lookup (tests, setup).
     pub fn from_lookup(env: &LlmEnv, lookup: impl Fn(&str) -> Option<String>) -> Self {
         let get = |name: &str| lookup(name).filter(|v| !v.is_empty());
+        let provider = match get(&env.var("PROVIDER")) {
+            Some(name) => Provider::parse(&name).unwrap_or_else(|| {
+                tracing::warn!("unknown {} {name:?}; using onde", env.var("PROVIDER"));
+                Provider::Onde
+            }),
+            None if get(API_KEY_VAR).is_some() => Provider::Onde,
+            None if get("OPENAI_API_KEY").is_some() => Provider::OpenAi,
+            None => Provider::Onde,
+        };
+        let (base_url, model) = match provider {
+            Provider::Onde => (
+                get(&env.var("BASE_URL"))
+                    .or_else(|| get("ONDE_BASE_URL"))
+                    .unwrap_or_else(|| DEFAULT_BASE_URL.into()),
+                get(&env.var("MODEL")).unwrap_or_else(|| env.default_model.into()),
+            ),
+            Provider::OpenAi => (
+                get("OPENAI_BASE_URL").unwrap_or_else(|| OPENAI_DEFAULT_BASE_URL.into()),
+                get(&env.var("MODEL"))
+                    .or_else(|| get("OPENAI_MODEL"))
+                    .unwrap_or_else(|| OPENAI_DEFAULT_MODEL.into()),
+            ),
+        };
         Self {
-            base_url: get(&env.var("BASE_URL"))
-                .unwrap_or_else(|| DEFAULT_BASE_URL.into())
-                .trim_end_matches('/')
-                .to_string(),
-            api_key: get(API_KEY_VAR),
-            model: get(&env.var("MODEL")).unwrap_or_else(|| env.default_model.into()),
+            provider,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: get(provider.key_var()),
+            model,
         }
     }
 }
@@ -167,6 +269,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn onde_base_url_points_onde_at_another_deployment() {
+        let c = config(&[
+            ("ONDE_API_KEY", "app:secret"),
+            ("ONDE_BASE_URL", "http://localhost:8090/v1/"),
+        ]);
+        assert_eq!(c.base_url, "http://localhost:8090/v1");
+        let both = config(&[
+            ("ONDE_BASE_URL", "http://a/v1"),
+            ("SPLITFIRE_BASE_URL", "http://b/v1"),
+        ]);
+        assert_eq!(both.base_url, "http://b/v1");
+    }
+
+    #[test]
+    fn openai_key_selects_a_generic_endpoint() {
+        let c = config(&[
+            ("OPENAI_API_KEY", "sk"),
+            ("OPENAI_MODEL", "my-model"),
+            ("OPENAI_BASE_URL", "http://x/v1/"),
+            ("ONDE_BASE_URL", "http://onde/v1"),
+        ]);
+        assert_eq!(
+            (
+                c.provider,
+                c.base_url.as_str(),
+                c.api_key.as_deref(),
+                c.model.as_str()
+            ),
+            (Provider::OpenAi, "http://x/v1", Some("sk"), "my-model")
+        );
+        let plain = config(&[("OPENAI_API_KEY", "sk")]);
+        assert_eq!(
+            (plain.base_url.as_str(), plain.model.as_str()),
+            ("https://api.openai.com/v1", "gpt-4o-mini")
+        );
+        assert_eq!(config(&[]).provider, Provider::Onde);
+    }
+
+    #[test]
+    fn onde_wins_over_openai_variables() {
+        let c = config(&[
+            ("ONDE_API_KEY", "app:secret"),
+            ("OPENAI_API_KEY", "sk-other"),
+            ("OPENAI_BASE_URL", "http://elsewhere/v1"),
+            ("OPENAI_MODEL", "gpt-x"),
+        ]);
+        assert_eq!(c.provider, Provider::Onde);
+        assert_eq!(c.api_key.as_deref(), Some("app:secret"));
+        assert_eq!(c.base_url, "https://cloud.ondeinference.com/v1");
+        assert_eq!(c.model, "onde-kkk");
+    }
+
+    #[test]
+    fn explicit_provider_wins_over_detected_keys() {
+        let c = config(&[
+            ("ONDE_API_KEY", "app:secret"),
+            ("OPENAI_API_KEY", "sk"),
+            ("SPLITFIRE_PROVIDER", "openai"),
+            ("SPLITFIRE_MODEL", "m"),
+        ]);
+        assert_eq!(
+            (c.provider, c.api_key.as_deref(), c.model.as_str()),
+            (Provider::OpenAi, Some("sk"), "m")
+        );
+        let onde = config(&[("SPLITFIRE_PROVIDER", "onde"), ("OPENAI_API_KEY", "sk")]);
+        assert_eq!((onde.provider, onde.api_key), (Provider::Onde, None));
+    }
+
     /// One test touches the process environment, so it can't race another.
     #[test]
     fn key_from_env_then_file_ignoring_empty_env() {
@@ -182,6 +353,7 @@ mod tests {
             std::env::set_var("SPLITFIRE_DATA_DIR", &dir);
             std::env::set_var("ONDE_API_KEY", "");
         }
+        assert_eq!(ENV.config_file_candidates(), vec![dir.join("env")]);
         let c = LlmConfig::from_env(&ENV);
         assert_eq!(c.api_key.as_deref(), Some("file:key"));
         assert_eq!(c.model, "m1");
@@ -233,6 +405,8 @@ pub struct ToolCallRequest {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    /// Provider extras that must be echoed back (e.g. Gemini's `thought_signature`).
+    pub extra_content: Option<Value>,
 }
 
 #[derive(Debug, Default)]
@@ -271,11 +445,15 @@ impl Completion {
                 .tool_calls
                 .iter()
                 .map(|tc| {
-                    json!({
+                    let mut call = json!({
                         "id": tc.id,
                         "type": "function",
                         "function": { "name": tc.name, "arguments": tc.arguments },
-                    })
+                    });
+                    if let Some(extra) = &tc.extra_content {
+                        call["extra_content"] = extra.clone();
+                    }
+                    call
                 })
                 .collect();
         }
@@ -319,6 +497,7 @@ struct ToolCallDelta {
     index: usize,
     id: Option<String>,
     function: Option<FunctionDelta>,
+    extra_content: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -370,8 +549,9 @@ impl LlmClient {
     /// Verify the configured key with a minimal chat completion.
     /// Returns `Err` when no key is set, the key is rejected, or the endpoint is unreachable.
     pub async fn check_auth(&self) -> Result<()> {
+        let provider = self.config.provider;
         let Some(key) = &self.config.api_key else {
-            bail!("no ONDE_API_KEY configured");
+            bail!("no {} configured", provider.key_var());
         };
         let body = json!({
             "model": self.config.model,
@@ -386,14 +566,17 @@ impl LlmClient {
             .bearer_auth(key)
             .send()
             .await
-            .context("reaching Onde Cloud")?;
+            .with_context(|| format!("reaching {}", provider.display_name()))?;
         let status = resp.status();
         if matches!(status.as_u16(), 401 | 403) {
-            bail!("Onde Cloud rejected the API key ({status})");
+            bail!(
+                "{} rejected the API key ({status})",
+                provider.display_name()
+            );
         }
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            bail!("Onde Cloud returned {status}: {text}");
+            bail!("{} returned {status}: {text}", provider.display_name());
         }
         Ok(())
     }
@@ -440,7 +623,8 @@ impl LlmClient {
     ) -> Result<Completion> {
         if self.config.api_key.is_none() {
             bail!(
-                "No API key configured. Set ONDE_API_KEY in the environment or run the agent's `--setup`"
+                "No API key configured. Set {} in the environment or run the agent's `--setup`",
+                self.config.provider.key_var()
             );
         }
         let mut body = json!({
@@ -522,6 +706,9 @@ impl LlmClient {
                         let slot = &mut out.tool_calls[tc.index];
                         if let Some(id) = tc.id {
                             slot.id = id;
+                        }
+                        if tc.extra_content.is_some() {
+                            slot.extra_content = tc.extra_content;
                         }
                         if let Some(f) = tc.function {
                             if let Some(n) = f.name {
