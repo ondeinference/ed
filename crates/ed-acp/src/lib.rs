@@ -23,7 +23,13 @@
 //! ```ignore
 //! let (agent_end, client_end) = agent_client_protocol::Channel::duplex();
 //! tokio::spawn(ed_acp::serve(profile, opts, agent_end));
-//! agent_client_protocol::Client.builder().connect_with(client_end, |conn| async move { … });
+//! agent_client_protocol::Client
+//!     .builder()
+//!     .connect_with(client_end, |conn| async move {
+//!         conn.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
+//!         Ok(())
+//!     })
+//!     .await?;
 //! ```
 
 mod agent;

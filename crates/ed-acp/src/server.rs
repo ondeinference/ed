@@ -51,6 +51,9 @@ pub async fn serve_stdio(
 /// subprocess, for example an app in the macOS App Store sandbox: connect it to
 /// [`Channel::duplex`](agent_client_protocol::Channel::duplex) and run an ACP client on the
 /// other end.
+///
+/// One call serves one connection: the transport is consumed, and the future resolves when
+/// that client hangs up. To serve another client, call `serve` again with a new transport.
 pub async fn serve(
     profile: Arc<dyn Profile>,
     opts: ServeOptions,
