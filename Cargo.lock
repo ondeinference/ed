@@ -4999,7 +4999,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onde"
-version = "1.3.1"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc87dc77609c5ed63840b263bc548acf50c1a6992a0a0834c032482e3cddc63b"
 dependencies = [
  "anyhow",
  "cc",
