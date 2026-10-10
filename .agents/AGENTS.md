@@ -92,6 +92,11 @@ product.  Do not hard-code env vars; always go through `LlmEnv`.
   toolchain; CI handles that — local `cargo check` is sufficient to validate
   Rust correctness.
 
+### Branches
+- Base branch is **`development`**. Open all PRs against `development`, not `main`.
+- Feature branches: `feature/<short-description>`.
+- Stacked PRs are fine; always target the parent feature branch, not `development`, when stacking.
+
 ### Commit messages
 - Scope to the affected crate(s): `ed-agent: …`, `ed-acp: …`, `ed-mcp: …`.
 - Keep the subject line under 72 chars.
