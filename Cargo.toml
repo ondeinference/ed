@@ -18,7 +18,7 @@ version = "1.2.1"
 edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
-authors = ["Splitfire AB"]
+authors = ["Onde Inference"]
 repository = "https://github.com/ondeinference/ed"
 homepage = "https://ondeinference.com"
 
