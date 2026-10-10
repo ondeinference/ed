@@ -19,6 +19,7 @@ serde_json.workspace = true
 log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+futures-core = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync"] }

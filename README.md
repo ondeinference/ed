@@ -44,7 +44,7 @@ Metal and CPU backends, tokens out. Ed is the part above it your users touch.
 
 ```toml
 [dependencies]
-ed-agent = "0.1"
+ed-agent = "1.2"
 ```
 
 ```rust
@@ -57,6 +57,13 @@ let reply = ed.send("Summarise this thread.").await;
 println!("{}", reply.reply.unwrap_or_default());
 ```
 
+Stream a reply with `Ed::stream` (plain chat) or let `Ed::run` forward deltas to
+`EventSink::text_delta`. `Ed::restore_history` loads a saved conversation,
+`Ed::generate` is a one-shot call that leaves the history alone, and
+`Ed::set_system_prompt` / `set_sampling` change the model's settings. These
+three need a loaded model. Persistence stays yours; implement `SessionStore`
+over whatever you already have.
+
 Construct with `Ed::with_agent` to provide the executor for registered tools
 and the approval handler for mutating tools. Read-only tools run directly;
 mutating tools must receive `AllowOnce` or `AllowForSession` first.
@@ -67,11 +74,22 @@ mutating tools must receive `AllowOnce` or `AllowForSession` first.
 | --- | --- |
 | [`ed-agent`](crates/ed-agent) | The agent. No framework dependency. |
 | [`ed-agent-ffi`](crates/ed-agent-ffi) | UniFFI bridge used by the Swift XCFramework. |
-| [`ed-agent-tauri`](crates/ed-agent-tauri) | Tauri bindings: a sink that emits to the webview, plus the commands it invokes. |
+| [`ed-agent-tauri`](crates/ed-agent-tauri) | Tauri bindings: a sink that emits to the webview, the commands it invokes, and `EdSessions` for apps with a chat history and webview-answered approvals. |
+
+The Onde Agent Platform crates, for agents that editors drive over the Agent Client Protocol
+(ACP). SplitFire Agent is built on them.
+
+| Crate | What it's for |
+| --- | --- |
+| [`ed-acp`](crates/ed-acp) | An ACP v1 server: sessions, auth, the turn loop on Onde Cloud, tool approval, workspace tools and MCP. A product supplies a `Profile`. |
+| [`ed-acp-tui`](crates/ed-acp-tui) | A terminal UI for any ACP agent. |
+| [`ed-mcp`](crates/ed-mcp) | MCP client glue over `rmcp`, the official Rust SDK: stdio and streamable HTTP servers, bearer tokens, tool namespacing, timeouts, progress and cancellation. With the `agent` feature, `McpExecutor` serves a toolset to Ed as tools. |
+| [`ed-onde-account`](crates/ed-onde-account) | Onde Inference account client: sign in, activate an app and get its Onde Cloud API key through ondeinference.com, with no Onde secrets in the host app. |
+| [`ed-acp-testkit`](crates/ed-acp-testkit) | Mock Onde Cloud endpoint, raw ACP client, the ACP registry probe and the ACP v1 conformance suite. |
 
 Free the intelligence.
 
 ## Copyright
 
-© 2026 [Splitfire AB](https://5mb.app) ([Onde Inference](https://ondeinference.com)).
+© 2026 [Onde Inference](https://ondeinference.com).
 Licensed under MIT or Apache-2.0.

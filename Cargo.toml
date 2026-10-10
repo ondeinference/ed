@@ -1,23 +1,33 @@
 [workspace]
 resolver = "2"
-members = ["crates/ed-agent", "crates/ed-agent-ffi", "crates/ed-agent-tauri", "uniffi-bindgen"]
+members = [
+    "crates/ed-agent",
+    "crates/ed-agent-ffi",
+    "crates/ed-agent-tauri",
+    "crates/ed-mcp",
+    "crates/ed-acp",
+    "crates/ed-acp-tui",
+    "crates/ed-acp-testkit",
+    "crates/ed-onde-account",
+    "uniffi-bindgen",
+]
 
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
 [workspace.package]
-version = "1.0.1"
+version = "1.2.2"
 edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
-authors = ["Splitfire AB"]
+authors = ["Onde Inference"]
 repository = "https://github.com/ondeinference/ed"
 homepage = "https://ondeinference.com"
 
 [workspace.dependencies]
-# The inference engine Ed wraps. Cargo uses the sibling checkout locally and
-# publishes only the version requirement. Release Onde's tool-calling API
-# before publishing Ed.
-onde = { version = "1.3.1" }
+# The inference engine Ed wraps, resolved from crates.io like any dependency
+# (there is no path override to a sibling checkout). 1.3.2 is the first release
+# with ChatEngine::complete, which ed-acp's local provider calls.
+onde = { version = "1.3.2" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,8 +41,29 @@ tauri = { version = "2", features = [] }
 uniffi = { version = "=0.31.0", features = ["tokio"] }
 smbcloud-gresiq-sdk = "0.4.7"
 
+# Onde Agent Platform v0.1 baseline (onde-web .agents/specs/onde-agent-platform, §5.4).
+# The ACP crates (ed-mcp, ed-acp, ed-acp-tui, ed-acp-testkit) use these; ed-agent does not.
+agent-client-protocol = "2.2"
+rmcp = { version = "3.5", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache", "unstable-rendered-line-info"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+tokio-util = "0.7"
+futures = "0.3"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+directories = "6"
+base64 = "0.23"
+
 # Internal
-ed-agent = { version = "1.0.1", path = "crates/ed-agent" }
+ed-agent = { version = "1.2.2", path = "crates/ed-agent" }
+ed-mcp = { version = "1.2.2", path = "crates/ed-mcp" }
+ed-acp = { version = "1.2.2", path = "crates/ed-acp" }
+ed-acp-tui = { version = "1.2.2", path = "crates/ed-acp-tui" }
+ed-acp-testkit = { version = "1.2.2", path = "crates/ed-acp-testkit" }
+ed-onde-account = { version = "1.2.2", path = "crates/ed-onde-account" }
 
 # gemm-common (via candle, via onde) depends on sysctl for every
 # `target_vendor = "apple"`, but sysctl 0.6.0 only has a `sys` module behind

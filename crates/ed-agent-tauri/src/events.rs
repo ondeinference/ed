@@ -45,6 +45,56 @@ pub const EVENT_CHAT_AGENT_REPLY: &str = "chat_agent_reply";
 /// is still viable, such as an unverified model or a spent tool-round budget.
 pub const EVENT_CHAT_WARNING: &str = "chat_warning";
 
+/// Emitted with a [`TextDeltaPayload`] for each piece of a reply as it is
+/// generated. Concatenate the deltas of one `id` to grow the assistant bubble;
+/// [`EVENT_CHAT_REPLY`] still arrives at the end with the whole text.
+pub const EVENT_CHAT_TEXT_DELTA: &str = "chat_text_delta";
+
+/// Emitted with an [`ApprovalResolvedPayload`] once an approval request has
+/// been answered, timed out, or cancelled, so the webview can close its sheet.
+pub const EVENT_CHAT_APPROVAL_RESOLVED: &str = "chat_approval_resolved";
+
+/// Payload for [`EVENT_CHAT_TEXT_DELTA`].
+///
+/// `session` and `id` are empty when the turn didn't come through a `submit`
+/// call, which is the only thing that knows them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextDeltaPayload {
+    pub session: String,
+    pub id: String,
+    pub delta: String,
+}
+
+/// Payload for [`EVENT_CHAT_REPLY`] when the turn came through `submit`.
+///
+/// A superset of [`ChatReply`](ed_agent::ChatReply), so a listener written for
+/// the single-session event keeps working.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitReplyPayload {
+    pub id: String,
+    pub session: String,
+    pub reply: Option<String>,
+    pub duration: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Payload for [`EVENT_CHAT_APPROVAL_REQUESTED`] when the approval handler is
+/// [`TauriApprovals`](crate::TauriApprovals). Answer it with
+/// `chat_respond_approval { request_id, decision }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestedPayload {
+    pub request_id: String,
+    pub session: String,
+    pub call: ed_agent::ToolCall,
+    pub risk: ed_agent::ToolRisk,
+}
+
+/// Payload for [`EVENT_CHAT_APPROVAL_RESOLVED`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalResolvedPayload {
+    pub request_id: String,
+}
+
 /// Payload for [`EVENT_CHAT_STATUS_CHANGED`].
 ///
 /// `status` serialises to `"unloaded"`, `"loading"`, `"ready"`, `"generating"`,
