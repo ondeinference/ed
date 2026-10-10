@@ -21,6 +21,15 @@ pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// Model for a generic endpoint when neither `<PREFIX>_MODEL` nor `OPENAI_MODEL` is set.
 pub const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
 
+/// The on-device model when `<PREFIX>_MODEL` is unset: Qwen3 1.7B on phones, where memory is
+/// tight, Qwen3 4B Instruct 2507 elsewhere. Both are in onde's tool-calling catalog.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub const LOCAL_DEFAULT_MODEL: &str = "bartowski/Qwen_Qwen3-1.7B-GGUF";
+/// The on-device model when `<PREFIX>_MODEL` is unset: Qwen3 1.7B on phones, where memory is
+/// tight, Qwen3 4B Instruct 2507 elsewhere. Both are in onde's tool-calling catalog.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub const LOCAL_DEFAULT_MODEL: &str = "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF";
+
 /// Where completions come from. Both speak the OpenAI chat completions API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
@@ -29,6 +38,10 @@ pub enum Provider {
     Onde,
     /// Any OpenAI API compatible endpoint: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`.
     OpenAi,
+    /// On-device inference with onde: no endpoint and no key. `<PREFIX>_MODEL` names a model
+    /// from onde's tool-calling catalog. Needs the `local` feature; without it every turn fails
+    /// with an error saying so.
+    Local,
 }
 
 impl Provider {
@@ -37,6 +50,7 @@ impl Provider {
         match self {
             Self::Onde => "onde",
             Self::OpenAi => "openai",
+            Self::Local => "local",
         }
     }
 
@@ -44,15 +58,17 @@ impl Provider {
         match name.to_ascii_lowercase().as_str() {
             "onde" | "onde-cloud" | "ondeinference" => Some(Self::Onde),
             "openai" => Some(Self::OpenAi),
+            "local" | "on-device" | "ondevice" => Some(Self::Local),
             _ => None,
         }
     }
 
-    /// The variable holding this provider's key.
+    /// The variable holding this provider's key. Empty for [`Provider::Local`], which has none.
     pub fn key_var(self) -> &'static str {
         match self {
             Self::Onde => API_KEY_VAR,
             Self::OpenAi => "OPENAI_API_KEY",
+            Self::Local => "",
         }
     }
 
@@ -61,6 +77,7 @@ impl Provider {
         match self {
             Self::Onde => "Onde Inference",
             Self::OpenAi => "the OpenAI API compatible endpoint",
+            Self::Local => "on-device inference",
         }
     }
 }
@@ -218,11 +235,19 @@ impl LlmConfig {
                     .or_else(|| get("OPENAI_MODEL"))
                     .unwrap_or_else(|| OPENAI_DEFAULT_MODEL.into()),
             ),
+            Provider::Local => (
+                String::new(),
+                get(&env.var("MODEL")).unwrap_or_else(|| LOCAL_DEFAULT_MODEL.into()),
+            ),
         };
         Self {
             provider,
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: get(provider.key_var()),
+            // On-device inference has no key, and `get("")` must not find one in an env file.
+            api_key: match provider {
+                Provider::Local => None,
+                _ => get(provider.key_var()),
+            },
             model,
         }
     }
@@ -254,6 +279,25 @@ mod tests {
         assert_eq!(c.model, "onde-kkk");
         assert_eq!(config(&[]).api_key, None);
         assert_eq!(config(&[("ONDE_API_KEY", "")]).api_key, None);
+    }
+
+    #[test]
+    fn local_needs_no_key() {
+        let c = config(&[
+            ("SPLITFIRE_PROVIDER", "local"),
+            ("ONDE_API_KEY", "app:secret"),
+        ]);
+        assert_eq!(c.provider, Provider::Local);
+        assert_eq!(c.model, LOCAL_DEFAULT_MODEL);
+        // A stored Onde key is not this provider's.
+        assert_eq!(c.api_key, None);
+        assert!(LlmClient::new(c).has_api_key());
+        assert_eq!(Provider::parse("on-device"), Some(Provider::Local));
+        let picked = config(&[
+            ("SPLITFIRE_PROVIDER", "local"),
+            ("SPLITFIRE_MODEL", "bartowski/Qwen_Qwen3-8B-GGUF"),
+        ]);
+        assert_eq!(picked.model, "bartowski/Qwen_Qwen3-8B-GGUF");
     }
 
     #[test]
@@ -541,15 +585,19 @@ impl LlmClient {
         &self.config
     }
 
-    /// Whether an API key is configured.
+    /// Whether the provider can be used: an API key is configured, or the provider needs none
+    /// ([`Provider::Local`]). The agent answers `AUTH_REQUIRED` when this is false.
     pub fn has_api_key(&self) -> bool {
-        self.config.api_key.is_some()
+        self.config.provider == Provider::Local || self.config.api_key.is_some()
     }
 
     /// Verify the configured key with a minimal chat completion.
     /// Returns `Err` when no key is set, the key is rejected, or the endpoint is unreachable.
     pub async fn check_auth(&self) -> Result<()> {
         let provider = self.config.provider;
+        if provider == Provider::Local {
+            return Ok(());
+        }
         let Some(key) = &self.config.api_key else {
             bail!("no {} configured", provider.key_var());
         };
@@ -583,6 +631,9 @@ impl LlmClient {
 
     /// List the models the configured endpoint serves (`GET {base_url}/models`).
     pub async fn models(&self) -> Result<Vec<ModelInfo>> {
+        if self.config.provider == Provider::Local {
+            return Ok(crate::local::catalog());
+        }
         let url = format!("{}/models", self.config.base_url);
         let mut req = self.http.get(&url);
         if let Some(key) = &self.config.api_key {
@@ -621,6 +672,9 @@ impl LlmClient {
         tools: &Value,
         mut on_delta: impl FnMut(Delta<'_>),
     ) -> Result<Completion> {
+        if self.config.provider == Provider::Local {
+            return crate::local::complete(model, messages, tools, on_delta).await;
+        }
         if self.config.api_key.is_none() {
             bail!(
                 "No API key configured. Set {} in the environment or run the agent's `--setup`",

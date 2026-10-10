@@ -7,7 +7,8 @@ use anyhow::Context;
 
 use crate::AgentInfo;
 use crate::llm::{
-    LlmClient, LlmConfig, LlmEnv, OPENAI_DEFAULT_BASE_URL, OPENAI_DEFAULT_MODEL, Provider,
+    LOCAL_DEFAULT_MODEL, LlmClient, LlmConfig, LlmEnv, OPENAI_DEFAULT_BASE_URL,
+    OPENAI_DEFAULT_MODEL, Provider,
 };
 
 /// Log to stderr, filtered by `RUST_LOG`. Stdout is reserved for ACP.
@@ -76,11 +77,17 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
     println!(
         "  2) OpenAI API compatible endpoint    (OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL)"
     );
+    let local = cfg!(feature = "local");
+    if local {
+        println!("  3) On-device                          (runs here, no key; downloads a model)");
+    }
+    let last = if local { 3 } else { 2 };
     let provider = loop {
-        match prompt_line("\nChoose a provider [1-2]: ")?.as_str() {
+        match prompt_line(&format!("\nChoose a provider [1-{last}]: "))?.as_str() {
             "" | "1" | "onde" => break Provider::Onde,
             "2" | "openai" => break Provider::OpenAi,
-            _ => println!("Please enter 1 or 2."),
+            "3" | "local" if local => break Provider::Local,
+            _ => println!("Please enter a number from 1 to {last}."),
         }
     };
     let mut vars = vec![(info.env.var("PROVIDER"), provider.name().to_string())];
@@ -103,6 +110,14 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
                 };
                 vars.push((var.to_string(), value));
             }
+        }
+        Provider::Local => {
+            println!(
+                "\nThe model ({}) downloads the first time the agent needs it.",
+                LOCAL_DEFAULT_MODEL
+            );
+            println!("Set {} to pick another one.", info.env.var("MODEL"));
+            return write_env(info, &vars);
         }
     }
     let key_var = provider.key_var();
@@ -132,6 +147,11 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
         Err(e) => anyhow::bail!("\nKey check failed: {e:#}\nNothing was written."),
     }
 
+    write_env(info, &vars)
+}
+
+/// Store `vars` in the agent's `env` file (mode 0600), keeping its other lines.
+fn write_env(info: &AgentInfo, vars: &[(String, String)]) -> anyhow::Result<()> {
     let dir = info
         .env
         .config_dir()
@@ -139,7 +159,7 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("env");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    std::fs::write(&path, with_vars(&existing, &vars))?;
+    std::fs::write(&path, with_vars(&existing, vars))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
