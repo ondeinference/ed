@@ -1958,7 +1958,7 @@ checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 
 [[package]]
 name = "ed-acp"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "ed-acp-testkit"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "serde_json",
  "tokio",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "ed-acp-tui"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "ed-agent"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "ed-agent-ffi"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "async-trait",
  "cc",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "ed-agent-tauri"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "async-trait",
  "ed-agent",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "ed-mcp"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -2064,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "ed-onde-account"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "axum",
  "reqwest 0.13.5",
