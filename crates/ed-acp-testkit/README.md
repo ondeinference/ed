@@ -13,5 +13,5 @@ The scriptable MCP server for tests is in [`ed-mcp`](https://crates.io/crates/ed
 
 ## Copyright
 
-© 2026 [Splitfire AB](https://5mb.app) ([Onde Inference](https://ondeinference.com)).
+© 2026 [Onde Inference](https://ondeinference.com).
 Licensed under MIT or Apache-2.0.
