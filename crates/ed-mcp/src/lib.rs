@@ -30,13 +30,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use futures::StreamExt;
 use rmcp::handler::client::progress::ProgressDispatcher;
 use rmcp::model::{
-    CallToolRequestParams, ClientCapabilities, ClientRequest, ContentBlock, Implementation,
-    ProgressNotificationParam, Request, ServerResult, Tool,
+    CallToolRequestParams, ClientCapabilities, ClientRequest, ContentBlock, ElicitationCapability,
+    Implementation, ProgressNotificationParam, Request, ServerResult, Tool,
 };
-use rmcp::service::{NotificationContext, PeerRequestOptions, RunningService};
+use rmcp::service::{NotificationContext, PeerRequestOptions, RequestContext, RunningService};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
-use rmcp::{ClientHandler, RoleClient, ServiceExt};
+use rmcp::{ClientHandler, ErrorData as McpError, RoleClient, ServiceExt};
 use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -89,6 +89,35 @@ fn sanitize(part: &str) -> String {
         out = out.replace("__", "_");
     }
     out.trim_matches('_').to_string()
+}
+
+// The MCP elicitation types an [`Elicitation`] handler works with, re-exported so embedders
+// need not depend on `rmcp` directly: the request a server sends, the client's answer, and the
+// three actions it can take (accept with content, decline, cancel).
+pub use rmcp::model::{ElicitRequestParams, ElicitResult, ElicitationAction};
+
+/// A hook for server-initiated `elicitation/create`: an MCP server asking the end user for
+/// structured input mid-call (see the [MCP elicitation spec]).
+///
+/// `ed-mcp` is a client, not a UI, so it does not answer these itself. An embedder (a host that
+/// wires `ed-mcp` into its own UX — e.g. forwarding to an ACP editor as a form) implements this
+/// trait and hands it to [`ToolsetConfig::with_elicitation`]. The handler is shared by every
+/// server in the session, built-in or client-supplied.
+///
+/// The return maps straight to MCP semantics: [`ElicitationAction::Accept`] with `content`,
+/// [`ElicitationAction::Decline`], or [`ElicitationAction::Cancel`]. Returning `Err` surfaces a
+/// protocol error to the server. When no handler is set, `ed-mcp` declines every request, which
+/// is the safe default the spec allows.
+///
+/// [MCP elicitation spec]: https://modelcontextprotocol.io/specification/draft/client/elicitation
+pub trait Elicitation: Send + Sync {
+    /// Answer one `elicitation/create` request. `server` is the name of the server that asked,
+    /// so the embedder can label its prompt.
+    fn elicit(
+        &self,
+        server: &str,
+        request: ElicitRequestParams,
+    ) -> futures::future::BoxFuture<'_, Result<ElicitResult>>;
 }
 
 /// Who is connecting: sent to every server in `initialize` as `clientInfo`.
@@ -228,6 +257,11 @@ impl ServerSpec {
 struct Handler {
     progress: ProgressDispatcher,
     info: ClientInfo,
+    /// The name of the server this handler is connected to, so an elicitation prompt can say
+    /// which server is asking.
+    server: String,
+    /// Where server-initiated `elicitation/create` requests go. `None` declines them all.
+    elicitation: Option<Arc<dyn Elicitation>>,
 }
 
 impl ClientHandler for Handler {
@@ -239,9 +273,32 @@ impl ClientHandler for Handler {
         self.progress.handle_notification(params).await;
     }
 
+    async fn create_elicitation(
+        &self,
+        request: ElicitRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> Result<ElicitResult, McpError> {
+        // No embedder hook: decline, as the spec allows. We still advertised the capability so a
+        // conforming server may ask; declining is the honest answer to "we have no UI for this".
+        let Some(handler) = &self.elicitation else {
+            return Ok(ElicitResult::new(ElicitationAction::Decline));
+        };
+        handler
+            .elicit(&self.server, request)
+            .await
+            .map_err(|e| McpError::internal_error(format!("elicitation handler failed: {e}"), None))
+    }
+
     fn get_info(&self) -> rmcp::model::ClientConfig {
+        // Advertise the `elicitation` capability only when an embedder gave us somewhere to send
+        // the request. A conforming server will not attempt `elicitation/create` otherwise, which
+        // keeps us from advertising a form UI we cannot actually present.
+        let mut capabilities = ClientCapabilities::default();
+        if self.elicitation.is_some() {
+            capabilities.elicitation = Some(ElicitationCapability::default());
+        }
         rmcp::model::ClientConfig::new(
-            ClientCapabilities::default(),
+            capabilities,
             Implementation::new(self.info.name.clone(), self.info.version.clone()),
         )
     }
@@ -257,9 +314,22 @@ pub struct Connection {
 impl Connection {
     /// Connect to `spec`, run the handshake and list its tools, each within `timeout`.
     pub async fn connect(spec: &ServerSpec, info: &ClientInfo, timeout: Duration) -> Result<Self> {
+        Self::connect_with(spec, info, None, timeout).await
+    }
+
+    /// Connect to `spec`, with an optional [`Elicitation`] hook for server-initiated
+    /// `elicitation/create` requests. [`Connection::connect`] is this with no hook.
+    pub async fn connect_with(
+        spec: &ServerSpec,
+        info: &ClientInfo,
+        elicitation: Option<Arc<dyn Elicitation>>,
+        timeout: Duration,
+    ) -> Result<Self> {
         let handler = Handler {
             progress: ProgressDispatcher::new(),
             info: info.clone(),
+            server: spec.name.clone(),
+            elicitation,
         };
         let handshake = match &spec.transport {
             Transport::Stdio { command, args, env } => {
@@ -380,7 +450,12 @@ impl SharedServer {
         self.name
     }
 
-    async fn get(&self, info: &ClientInfo, timeout: Duration) -> Option<Arc<Connection>> {
+    async fn get(
+        &self,
+        info: &ClientInfo,
+        elicitation: Option<Arc<dyn Elicitation>>,
+        timeout: Duration,
+    ) -> Option<Arc<Connection>> {
         let mut state = self.state.lock().await;
         match &*state {
             SharedState::Running(conn) => return Some(conn.clone()),
@@ -392,7 +467,7 @@ impl SharedServer {
             tracing::info!("built-in MCP server `{}` is not available", self.name);
             return None;
         };
-        match Connection::connect(&spec, info, timeout).await {
+        match Connection::connect_with(&spec, info, elicitation, timeout).await {
             Ok(conn) => {
                 tracing::info!("built-in MCP server `{}` available", self.name);
                 let conn = Arc::new(conn);
@@ -424,6 +499,10 @@ pub struct ToolsetConfig {
     pub client: ClientInfo,
     pub connect_timeout: Duration,
     pub call_timeout: Duration,
+    /// Where server-initiated `elicitation/create` requests go. Set by
+    /// [`ToolsetConfig::with_elicitation`]; `None` (the default) declines them all and does not
+    /// advertise the capability. Shared by every server in the session.
+    pub elicitation: Option<Arc<dyn Elicitation>>,
 }
 
 impl ToolsetConfig {
@@ -432,7 +511,15 @@ impl ToolsetConfig {
             client,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             call_timeout: DEFAULT_CALL_TIMEOUT,
+            elicitation: None,
         }
+    }
+
+    /// Forward servers' `elicitation/create` requests to `handler`. This also makes `ed-mcp`
+    /// advertise the `elicitation` client capability, so conforming servers will ask.
+    pub fn with_elicitation(mut self, handler: Arc<dyn Elicitation>) -> Self {
+        self.elicitation = Some(handler);
+        self
     }
 }
 
@@ -524,8 +611,16 @@ impl McpToolset {
         builtins: &[&'static SharedServer],
     ) -> Self {
         let mut set = Self::empty(config);
+        let elicitation = set.config.elicitation.clone();
         for spec in servers {
-            match Connection::connect(spec, &set.config.client, set.config.connect_timeout).await {
+            match Connection::connect_with(
+                spec,
+                &set.config.client,
+                elicitation.clone(),
+                set.config.connect_timeout,
+            )
+            .await
+            {
                 Ok(conn) => set.add(Arc::new(conn)),
                 Err(e) => tracing::warn!("MCP server `{}` unavailable: {e:#}", spec.name),
             }
@@ -535,7 +630,11 @@ impl McpToolset {
                 continue;
             }
             if let Some(conn) = builtin
-                .get(&set.config.client, set.config.connect_timeout)
+                .get(
+                    &set.config.client,
+                    elicitation.clone(),
+                    set.config.connect_timeout,
+                )
                 .await
             {
                 set.add(conn);

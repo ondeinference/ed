@@ -6538,6 +6538,7 @@ dependencies = [
  "tokio-util",
  "tower-service",
  "tracing",
+ "url",
  "uuid 1.27.0",
 ]
 
