@@ -15,7 +15,8 @@
 //!   a frontend wants one shape covering both outcomes. That's [`ChatReply`].
 //!
 //! Ed deliberately does *not* own sessions, persistence, model catalogues, or
-//! downloads. Those differ per application and belong to the host.
+//! downloads. Those differ per application and belong to the host. For
+//! persistence it defines the [`SessionStore`] seam the host implements.
 //!
 //! # Platforms
 //!
@@ -49,12 +50,16 @@
 
 mod ed;
 mod reply;
+mod session;
 mod sink;
+mod stream;
 mod tool;
 
 pub use ed::Ed;
 pub use reply::ChatReply;
+pub use session::{SessionError, SessionMeta, SessionStore};
 pub use sink::{EventSink, NoopSink, StatusSink};
+pub use stream::TextStream;
 pub use tool::{
     AgentConfig, AgentError, AgentReply, AgentToolDefinition, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, DenyApprovals, RejectingExecutor, ToolCall, ToolExecutionResult, ToolExecutor,

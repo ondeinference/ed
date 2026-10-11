@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{error, info};
 use onde::inference::types::{format_duration, ChatMessage};
@@ -14,9 +14,10 @@ use onde::inference::{
 };
 
 use crate::{
-    tool::truncate_output, AgentConfig, AgentError, AgentReply, AgentToolDefinition,
-    ApprovalDecision, ApprovalHandler, ApprovalRequest, ChatReply, DenyApprovals, EventSink,
-    NoopSink, RejectingExecutor, ToolCall, ToolExecutionResult, ToolExecutor, ToolRisk,
+    stream::chunk_error, tool::truncate_output, AgentConfig, AgentError, AgentReply,
+    AgentToolDefinition, ApprovalDecision, ApprovalHandler, ApprovalRequest, ChatReply,
+    DenyApprovals, EventSink, NoopSink, RejectingExecutor, TextStream, ToolCall,
+    ToolExecutionResult, ToolExecutor, ToolRisk,
 };
 
 /// An embeddable chat agent over a single [`ChatEngine`].
@@ -226,6 +227,60 @@ impl<S: EventSink> Ed<S> {
         reply
     }
 
+    /// Stream the reply to one message, for plain chat without tools.
+    ///
+    /// Returns once generation has started; the stream yields text deltas as
+    /// they are produced. Unlike [`run`](Ed::run) this takes no turn lock and
+    /// reports nothing to the sink, so don't overlap it with another turn.
+    /// Drop the stream to cancel; a [`cancel`](Ed::cancel) call is not needed.
+    pub async fn stream(&self, message: impl Into<String>) -> Result<TextStream, InferenceError> {
+        Ok(TextStream::new(self.engine.stream_message(message).await?))
+    }
+
+    /// One-shot generation over explicit messages.
+    ///
+    /// Leaves the conversation history untouched; the engine's system prompt
+    /// is still applied. `sampling` overrides the engine's for this call only.
+    pub async fn generate(
+        &self,
+        messages: Vec<ChatMessage>,
+        sampling: Option<SamplingConfig>,
+    ) -> Result<String, InferenceError> {
+        Ok(self.engine.generate(messages, sampling).await?.text)
+    }
+
+    /// Set the system prompt used for every later turn.
+    ///
+    /// Like the other engine setters below, and `restore_history`, this does
+    /// nothing until a model is loaded: `onde` keeps these on the loaded model.
+    pub async fn set_system_prompt(&self, prompt: impl Into<String>) {
+        self.engine.set_system_prompt(prompt).await;
+    }
+
+    pub async fn clear_system_prompt(&self) {
+        self.engine.clear_system_prompt().await;
+    }
+
+    /// Change the default sampling parameters.
+    pub async fn set_sampling(&self, sampling: SamplingConfig) {
+        self.engine.set_sampling(sampling).await;
+    }
+
+    /// Replace the conversation with `messages`.
+    ///
+    /// For switching to a saved session or restoring one at launch. Clears
+    /// the current history first, and with it every `AllowForSession` grant,
+    /// exactly as [`clear_history`](Ed::clear_history) does: a restored
+    /// conversation starts without consent from the previous one.
+    pub async fn restore_history(&self, messages: Vec<ChatMessage>) {
+        self.clear_history().await;
+        let count = messages.len();
+        for message in messages {
+            self.engine.push_history(message).await;
+        }
+        info!("ed: restored {count} messages");
+    }
+
     /// Register a host capability that the model may request.
     pub async fn register_tool(&self, tool: AgentToolDefinition) -> Result<(), AgentError> {
         tool.validate()?;
@@ -345,20 +400,39 @@ impl<S: EventSink> Ed<S> {
             // `ChatReply` to the sink, and a host listening for both events
             // would render this turn's answer twice. An agent turn reports
             // `agent_replied` and nothing else.
-            let result =
-                self.engine
-                    .send_message(message)
-                    .await
-                    .map_err(|error| AgentError::Inference {
-                        reason: error.to_string(),
-                    })?;
-            if result.text.trim().is_empty() {
+            let started = Instant::now();
+            let mut rx = self.engine.stream_message(message).await.map_err(|error| {
+                AgentError::Inference {
+                    reason: error.to_string(),
+                }
+            })?;
+            let mut text = String::new();
+            while let Some(chunk) = rx.recv().await {
+                if self.cancelled.load(Ordering::Acquire) {
+                    // Dropping the receiver stops generation.
+                    return Err(AgentError::Cancelled);
+                }
+                if chunk.done {
+                    if let Some(error) = chunk_error(&chunk) {
+                        return Err(AgentError::Inference {
+                            reason: error.to_string(),
+                        });
+                    }
+                    break;
+                }
+                if !chunk.delta.is_empty() {
+                    self.sink.text_delta(&chunk.delta);
+                    text.push_str(&chunk.delta);
+                }
+            }
+            if text.trim().is_empty() {
                 return Err(AgentError::EmptyReply);
             }
+            let elapsed = started.elapsed();
             let agent_reply = AgentReply {
-                text: result.text,
-                duration_seconds: result.duration_secs,
-                duration: result.duration_display,
+                text,
+                duration_seconds: elapsed.as_secs_f64(),
+                duration: format_duration(elapsed),
                 tool_rounds: 0,
             };
             self.sink.agent_replied(&agent_reply);
@@ -482,6 +556,10 @@ impl<S: EventSink> Ed<S> {
                 AgentError::EmptyReply
             });
         }
+        // Tool rounds are not streamed: `onde` only parses tool calls out of a
+        // complete response, so the answer arrives whole. Report it as one
+        // delta so a host rendering deltas sees every turn the same way.
+        self.sink.text_delta(&result.text);
         let reply = AgentReply {
             text: result.text,
             duration_seconds,
@@ -832,5 +910,42 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("JSON object"));
         assert_eq!(executor.0.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn restoring_history_revokes_session_grants() {
+        let ed = Ed::with_agent(
+            NoopSink,
+            Arc::new(CountingExecutor(AtomicUsize::new(0))),
+            Arc::new(FixedApproval(ApprovalDecision::AllowForSession)),
+            AgentConfig::default(),
+        );
+        ed.register_tool(AgentToolDefinition::mutating(
+            "save_note",
+            "Save a note",
+            r#"{"type":"object"}"#,
+        ))
+        .await
+        .unwrap();
+        let tools = ed.tools.read().await.clone();
+        ed.execute_tool_call(&call("save_note"), &tools).await;
+        assert!(ed.session_grants.lock().await.contains("save_note"));
+
+        ed.restore_history(Vec::new()).await;
+
+        assert!(ed.session_grants.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn generation_and_streaming_need_a_loaded_model() {
+        let ed = Ed::new();
+        assert!(matches!(
+            ed.generate(vec![ChatMessage::user("hi")], None).await,
+            Err(InferenceError::NoModelLoaded)
+        ));
+        assert!(matches!(
+            ed.stream("hi").await,
+            Err(InferenceError::NoModelLoaded)
+        ));
     }
 }

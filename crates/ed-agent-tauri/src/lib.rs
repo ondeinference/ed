@@ -43,21 +43,41 @@
 //! where, is an application decision. Call [`Ed::load`](ed_agent::Ed::load)
 //! from your own command or during setup.
 //!
+//! # Several conversations
+//!
+//! For an app with a session list, build an [`EdSessions`] instead of an
+//! [`EdState`]. You supply a [`SessionStore`](ed_agent::SessionStore); it owns
+//! the live session, the cache, the logout fence and approvals:
+//!
+//! ```text
+//! let sessions = EdSessions::builder(app.handle().clone(), MyStore::new())
+//!     .executor(my_executor)
+//!     .build();
+//! app.manage(sessions);
+//! ```
+//!
+//! Register `chat_list_sessions`, `chat_new_session`, `chat_switch_session`,
+//! `chat_delete_session`, `chat_get_session_history`, `chat_submit` and
+//! `chat_respond_approval`. `chat_submit` returns at once and the answer comes
+//! as a `chat_reply` event `{id, session, reply, duration, error}`, with
+//! `chat_text_delta {session, id, delta}` events while it generates.
+//!
+//! A host that has to rewrite the message first (to add context) or recover
+//! from an engine failure wraps [`EdSessions::submit_with`] in a command of its
+//! own. Call [`EdSessions::reset`] on logout or account switch.
+//!
 //! # Tools
 //!
-//! Tool calling works through this crate, but the host owns both halves of it.
-//! Build the agent with [`Ed::with_agent`](ed_agent::Ed::with_agent) to supply
-//! a [`ToolExecutor`](ed_agent::ToolExecutor) and an
-//! [`ApprovalHandler`](ed_agent::ApprovalHandler); the default `Ed::with_sink`
-//! rejects every tool and denies every approval, which is the right default but
-//! not a working agent.
+//! Tool calling works through this crate, but the host supplies the executor.
+//! With [`EdSessions`] approvals are handled for you: [`TauriApprovals`] emits
+//! `chat_approval_requested {request_id, session, call, risk}`, waits (120 s by
+//! default) for `chat_respond_approval {request_id, decision}`, then emits
+//! `chat_approval_resolved {request_id}`. A timeout or a reset denies.
 //!
-//! Approvals are deliberately not a command. Answering one means a webview
-//! round trip in the middle of an awaited Rust call, and how a host wants to
-//! wire that up (a channel, a shared map, a modal it blocks on) differs enough
-//! that guessing here would be worse than leaving it. What this crate does give
-//! you is [`EVENT_CHAT_APPROVAL_REQUESTED`], so the sheet can go up at the
-//! right moment.
+//! With [`EdState`], build the agent with
+//! [`Ed::with_agent`](ed_agent::Ed::with_agent) and your own
+//! [`ApprovalHandler`](ed_agent::ApprovalHandler); the default `Ed::with_sink`
+//! rejects every tool and denies every approval.
 //!
 //! # Events
 //!
@@ -74,20 +94,30 @@
 //!   [`ToolExecutionResult`](ed_agent::ToolExecutionResult)
 //! - [`EVENT_CHAT_AGENT_REPLY`] with an [`AgentReply`](ed_agent::AgentReply)
 //! - [`EVENT_CHAT_WARNING`] with a string
+//! - [`EVENT_CHAT_TEXT_DELTA`] with a [`TextDeltaPayload`]
+//! - [`EVENT_CHAT_APPROVAL_RESOLVED`] with an [`ApprovalResolvedPayload`]
 
 #![forbid(unsafe_code)]
 
+mod approvals;
 mod commands;
 mod events;
+mod scope;
+mod sessions;
 mod sink;
 
+pub use approvals::{TauriApprovals, DEFAULT_APPROVAL_TIMEOUT};
 pub use commands::{
-    chat_cancel, chat_clear_history, chat_get_history, chat_get_status, chat_run,
-    chat_send_message, EdState,
+    chat_cancel, chat_clear_history, chat_delete_session, chat_get_history,
+    chat_get_session_history, chat_get_status, chat_list_sessions, chat_new_session,
+    chat_respond_approval, chat_run, chat_send_message, chat_submit, chat_switch_session, EdState,
 };
 pub use events::{
-    ChatStatusPayload, EVENT_CHAT_AGENT_REPLY, EVENT_CHAT_APPROVAL_REQUESTED, EVENT_CHAT_REPLY,
-    EVENT_CHAT_STATUS_CHANGED, EVENT_CHAT_TOOL_FINISHED, EVENT_CHAT_TOOL_REQUESTED,
+    ApprovalRequestedPayload, ApprovalResolvedPayload, ChatStatusPayload, SubmitReplyPayload,
+    TextDeltaPayload, EVENT_CHAT_AGENT_REPLY, EVENT_CHAT_APPROVAL_REQUESTED,
+    EVENT_CHAT_APPROVAL_RESOLVED, EVENT_CHAT_REPLY, EVENT_CHAT_STATUS_CHANGED,
+    EVENT_CHAT_TEXT_DELTA, EVENT_CHAT_TOOL_FINISHED, EVENT_CHAT_TOOL_REQUESTED,
     EVENT_CHAT_TOOL_STARTED, EVENT_CHAT_WARNING,
 };
+pub use sessions::{EdSessions, EdSessionsBuilder};
 pub use sink::TauriSink;

@@ -66,5 +66,5 @@ support list silently disables chat on a platform that would have worked.
 
 ## Copyright
 
-© 2026 [Splitfire AB](https://5mb.app) ([Onde Inference](https://ondeinference.com)).
+© 2026 [Onde Inference](https://ondeinference.com).
 Licensed under MIT or Apache-2.0.

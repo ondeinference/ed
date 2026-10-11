@@ -1,8 +1,11 @@
 //! The commands a webview invokes.
 
-use ed_agent::{AgentReply, ChatMessage, ChatReply, Ed, EngineInfo};
+use std::sync::Arc;
+
+use ed_agent::{AgentReply, ApprovalDecision, ChatMessage, ChatReply, Ed, EngineInfo, SessionMeta};
 use tauri::State;
 
+use crate::sessions::EdSessions;
 use crate::sink::TauriSink;
 
 /// Managed state holding the agent.
@@ -12,12 +15,12 @@ use crate::sink::TauriSink;
 /// runs more than one window against separate engines, needs to control the
 /// lifetime, and a `static` takes that away.
 pub struct EdState {
-    ed: Ed<TauriSink>,
+    ed: Arc<Ed<TauriSink>>,
 }
 
 impl EdState {
     pub fn new(ed: Ed<TauriSink>) -> Self {
-        Self { ed }
+        Self { ed: Arc::new(ed) }
     }
 
     /// The agent, for commands the host defines itself — loading a model,
@@ -25,6 +28,44 @@ impl EdState {
     /// wrap.
     pub fn ed(&self) -> &Ed<TauriSink> {
         &self.ed
+    }
+
+    /// A shared handle to the agent, for work moved onto a spawned task.
+    pub fn shared(&self) -> Arc<Ed<TauriSink>> {
+        self.ed.clone()
+    }
+
+    /// Run an agent turn on a spawned task and deliver the result as a
+    /// `chat_reply` event `{id, session, reply, duration, error}`, with
+    /// `session` empty. Returns immediately.
+    ///
+    /// For single-conversation apps. A long-pending invoke can be dropped by a
+    /// mobile webview, so the answer travels by event. Text deltas arrive as
+    /// `chat_text_delta` while it runs.
+    pub fn submit(&self, app: tauri::AppHandle, id: String, message: String) {
+        use tauri::Emitter;
+        let ed = self.ed.clone();
+        tokio::spawn(async move {
+            let payload = match ed.run(message).await {
+                Ok(reply) => crate::SubmitReplyPayload {
+                    id,
+                    session: String::new(),
+                    reply: Some(reply.text),
+                    duration: Some(reply.duration),
+                    error: None,
+                },
+                Err(err) => crate::SubmitReplyPayload {
+                    id,
+                    session: String::new(),
+                    reply: None,
+                    duration: None,
+                    error: Some(err.to_string()),
+                },
+            };
+            if let Err(err) = app.emit(crate::EVENT_CHAT_REPLY, payload) {
+                log::warn!("ed-tauri: could not emit chat_reply: {err}");
+            }
+        });
     }
 }
 
@@ -87,4 +128,65 @@ pub async fn chat_run(state: State<'_, EdState>, message: String) -> Result<Agen
 pub async fn chat_cancel(state: State<'_, EdState>) -> Result<(), String> {
     state.ed.cancel();
     Ok(())
+}
+
+/// Stored sessions, most recently updated first.
+#[tauri::command]
+pub async fn chat_list_sessions(state: State<'_, EdSessions>) -> Result<Vec<SessionMeta>, String> {
+    state.list().await.map_err(|e| e.to_string())
+}
+
+/// Start an empty session and make it live. Returns its id.
+#[tauri::command]
+pub async fn chat_new_session(state: State<'_, EdSessions>) -> Result<String, String> {
+    Ok(state.new_session().await)
+}
+
+/// Make `session` live and return its messages.
+#[tauri::command]
+pub async fn chat_switch_session(
+    state: State<'_, EdSessions>,
+    session: String,
+) -> Result<Vec<ChatMessage>, String> {
+    Ok(state.history(&session).await)
+}
+
+#[tauri::command]
+pub async fn chat_delete_session(
+    state: State<'_, EdSessions>,
+    session: String,
+) -> Result<(), String> {
+    state.delete(&session).await.map_err(|e| e.to_string())
+}
+
+/// The messages of `session`, without switching to it.
+#[tauri::command]
+pub async fn chat_get_session_history(
+    state: State<'_, EdSessions>,
+    session: String,
+) -> Result<Vec<ChatMessage>, String> {
+    Ok(state.peek(&session).await)
+}
+
+/// Run a turn in `session`. Returns at once; the result is a `chat_reply`
+/// event carrying `id`.
+#[tauri::command]
+pub async fn chat_submit(
+    state: State<'_, EdSessions>,
+    session: String,
+    id: String,
+    message: String,
+) -> Result<(), String> {
+    state.submit(&session, &id, message).await;
+    Ok(())
+}
+
+/// Answer a `chat_approval_requested` event.
+#[tauri::command]
+pub async fn chat_respond_approval(
+    state: State<'_, EdSessions>,
+    request_id: String,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    state.respond_approval(&request_id, decision).await
 }
