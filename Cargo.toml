@@ -6,6 +6,7 @@ members = [
     "crates/ed-agent-tauri",
     "crates/ed-mcp",
     "crates/ed-acp",
+    "crates/ed-acp-tauri",
     "crates/ed-acp-tui",
     "crates/ed-acp-testkit",
     "crates/ed-onde-account",
@@ -61,6 +62,7 @@ base64 = "0.23"
 ed-agent = { version = "1.2.2", path = "crates/ed-agent" }
 ed-mcp = { version = "1.2.2", path = "crates/ed-mcp" }
 ed-acp = { version = "1.2.2", path = "crates/ed-acp" }
+ed-acp-tauri = { version = "1.2.2", path = "crates/ed-acp-tauri" }
 ed-acp-tui = { version = "1.2.2", path = "crates/ed-acp-tui" }
 ed-acp-testkit = { version = "1.2.2", path = "crates/ed-acp-testkit" }
 ed-onde-account = { version = "1.2.2", path = "crates/ed-onde-account" }
