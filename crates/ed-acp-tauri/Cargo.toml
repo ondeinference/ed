@@ -1,0 +1,24 @@
+[package]
+name = "ed-acp-tauri"
+description = "Hosts an ed-acp agent inside a Tauri app: in-process ACP serve, permissions, sign-in, sessions and the webview events."
+keywords = ["tauri", "acp", "agent", "onde", "mcp"]
+categories = ["development-tools", "gui"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ed-acp.workspace = true
+agent-client-protocol.workspace = true
+tauri.workspace = true
+tauri-plugin-opener = "2"
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+tsync = "2"
+uuid.workspace = true

@@ -72,12 +72,7 @@ pub async fn serve(
                 let agent = agent.clone();
                 async move |req: InitializeRequest, responder, _cx| {
                     agent.set_client_caps(req.client_capabilities.clone());
-                    // Terminal auth is only usable by clients that can run it.
-                    let methods = if agent::supports_terminal_auth(&req.client_capabilities) {
-                        agent::auth_methods()
-                    } else {
-                        Vec::new()
-                    };
+                    let methods = agent.auth_methods(&req.client_capabilities);
                     responder.respond(
                         InitializeResponse::new(agent::negotiate_version(req.protocol_version))
                             .auth_methods(methods)
@@ -111,9 +106,13 @@ pub async fn serve(
             {
                 let agent = agent.clone();
                 async move |req: AuthenticateRequest, responder, cx| {
+                    // Spawned: a provider may wait on the client's answer to an elicitation,
+                    // which the dispatch loop has to be free to deliver.
                     let agent = agent.clone();
+                    let connection = cx.clone();
+                    let request_id = responder.id().clone();
                     cx.spawn(async move {
-                        match agent.authenticate(req).await {
+                        match agent.authenticate(req, &connection, request_id).await {
                             Ok(resp) => responder.respond(resp),
                             Err(e) => responder.respond_with_error(e),
                         }
