@@ -13,6 +13,7 @@ into focused crates; do not merge them.
 |---|---|
 | `ed-agent` | Core library: `Ed` struct, lifecycle, `send`/`stream`/`run`, tool approval, `EventSink`, `SessionStore` seams |
 | `ed-acp` | ACP v1 server: `Profile` trait, `serve`/`serve_stdio`, sessions, LLM streaming, tool routing, MCP |
+| `ed-acp-tauri` | Hosts an `ed-acp` agent in a Tauri app: in-process `serve` over `Channel::duplex`, permission prompts, `fs/*` inside per-session roots, URL-elicitation sign-in via the system browser, session and config-option commands |
 | `ed-mcp` | MCP integration over `rmcp`: tool namespacing (`mcp__<server>__<tool>`, max 64 bytes), `SharedServer`, `McpExecutor`, timeouts, cancellation |
 | `ed-acp-tui` | ratatui TUI frontend for ACP agents over stdio |
 | `ed-acp-testkit` | Mock Onde Cloud endpoint + conformance test suite |
@@ -45,6 +46,12 @@ into focused crates; do not merge them.
 
 6. **Tauri and FFI are separate bindings.**  `ed-agent-tauri` and
    `ed-agent-ffi` both wrap `ed-agent` but must not depend on each other.
+   `ed-acp-tauri` is the Tauri host for `ed-acp` agents; it does not depend on
+   `ed-agent-tauri`.
+
+7. **A product's own sign-in goes through `Profile::auth`.**  `ed-acp` knows
+   terminal auth and the `<PREFIX>_*` env file. A product with a browser or
+   session sign-in supplies an `AuthProvider`; do not put its flow in `ed-acp`.
 
 ---
 
