@@ -420,12 +420,13 @@ impl AcpServer {
     /// and keeps the agent signed in.
     pub async fn logout(&self) -> agent_client_protocol::Result<LogoutResponse> {
         if let Some(auth) = &self.auth {
-            let result = auth.logout().await;
-            *self.models.lock().await = None;
-            *self.llm.lock().unwrap() =
-                LlmClient::new(Self::config_for(self.auth.as_deref(), &self.env));
-            return match result {
-                Ok(()) => Ok(LogoutResponse::new()),
+            return match auth.logout().await {
+                Ok(()) => {
+                    *self.models.lock().await = None;
+                    *self.llm.lock().unwrap() =
+                        LlmClient::new(Self::config_for(self.auth.as_deref(), &self.env));
+                    Ok(LogoutResponse::new())
+                }
                 Err(e) => {
                     Err(agent_client_protocol::Error::internal_error().data(format!("{e:#}")))
                 }
