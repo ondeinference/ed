@@ -344,6 +344,39 @@ async fn forwards_server_elicitation_to_the_hook() {
 }
 
 #[tokio::test]
+async fn a_hook_can_cancel_an_elicitation() {
+    let url = serve().await;
+    let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
+
+    // A hook that cancels round-trips distinctly from one that declines: `create_elicitation`
+    // forwards the hook's `ElicitResult` verbatim, so the server sees Cancel, not Decline.
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook = Arc::new(Recorder {
+        seen: seen.clone(),
+        answer: ElicitResult::new(ElicitationAction::Cancel),
+    });
+    let config = ToolsetConfig::new(client()).with_elicitation(hook);
+    let set = McpToolset::connect_specs(config, &[spec], &[]).await;
+
+    let out = set
+        .call(
+            "mcp__mail__collect_feedback",
+            json!({}),
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
+
+    // The hook ran and the server mapped Cancel to "cancelled", distinct from "declined".
+    assert!(!out.failed, "{}", out.text);
+    assert_eq!(out.text, "cancelled");
+    assert_eq!(seen.lock().unwrap().len(), 1, "the hook was called once");
+
+    set.shutdown().await;
+}
+
+#[tokio::test]
 async fn without_a_hook_server_elicitation_is_declined() {
     let url = serve().await;
     let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
