@@ -35,7 +35,9 @@ agent = ["dep:ed-agent", "dep:async-trait"]
 test-server = []
 
 [dev-dependencies]
-rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+# `elicitation` adds the server peer's `create_elicitation`, so the in-process test server can
+# ask the client for input and exercise the forwarding hook.
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server", "elicitation"] }
 axum = "0.8"
 tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 # Run the feature-gated code's tests under a plain `cargo test`.

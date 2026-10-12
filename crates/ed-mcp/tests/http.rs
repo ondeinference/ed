@@ -9,7 +9,8 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use ed_agent::{ToolExecutor, ToolRisk};
 use ed_mcp::{
-    ClientInfo, Connection, McpExecutor, McpToolset, ServerSpec, ToolPolicy, ToolsetConfig,
+    ClientInfo, Connection, ElicitRequestParams, ElicitResult, Elicitation, ElicitationAction,
+    McpExecutor, McpToolset, ServerSpec, ToolPolicy, ToolsetConfig,
 };
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
@@ -46,7 +47,9 @@ impl ServerHandler for Mailbox {
                     .annotate(ToolAnnotations::new().read_only(true)),
                 // Says nothing, like a server that predates annotations.
                 Tool::new("list_messages", "Recent messages.", schema.clone()),
-                Tool::new("send_message", "Send mail.", schema),
+                Tool::new("send_message", "Send mail.", schema.clone()),
+                // Elicits structured input from the user mid-call.
+                Tool::new("collect_feedback", "Ask the user for feedback.", schema),
             ],
             ..Default::default()
         })
@@ -55,8 +58,43 @@ impl ServerHandler for Mailbox {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        // `collect_feedback` asks the client (via `elicitation/create`) for input and reports
+        // what came back, so a test can prove the request reached the client's hook and the
+        // answer flowed back.
+        if request.name == "collect_feedback" {
+            let params: ElicitRequestParams = serde_json::from_value(json!({
+                "mode": "form",
+                "message": "How was it?",
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {"rating": {"type": "string"}},
+                    "required": ["rating"]
+                }
+            }))
+            .unwrap();
+            let result = context
+                .peer
+                .create_elicitation(params)
+                .await
+                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            let text = match result.action {
+                ElicitationAction::Accept => {
+                    let rating = result
+                        .content
+                        .as_ref()
+                        .and_then(|c: &serde_json::Value| c.get("rating"))
+                        .and_then(|v: &serde_json::Value| v.as_str())
+                        .unwrap_or("");
+                    format!("accepted: {rating}")
+                }
+                ElicitationAction::Decline => "declined".to_string(),
+                ElicitationAction::Cancel => "cancelled".to_string(),
+                _ => "unknown".to_string(),
+            };
+            return Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into());
+        }
         Ok(
             CallToolResult::success(vec![ContentBlock::text(format!("ran {}", request.name))])
                 .into(),
@@ -111,6 +149,7 @@ async fn connects_lists_and_calls_with_a_bearer_token() {
     assert_eq!(
         names,
         [
+            "mcp__mail__collect_feedback",
             "mcp__mail__list_messages",
             "mcp__mail__send_message",
             "mcp__mail__whoami"
@@ -140,7 +179,15 @@ async fn a_connection_lists_and_calls_tools_by_their_own_names() {
 
     let mut names: Vec<_> = conn.tools().iter().map(|t| t.name.to_string()).collect();
     names.sort();
-    assert_eq!(names, ["list_messages", "send_message", "whoami"]);
+    assert_eq!(
+        names,
+        [
+            "collect_feedback",
+            "list_messages",
+            "send_message",
+            "whoami"
+        ]
+    );
 
     let result = conn
         .call_tool("whoami", json!({}), Duration::from_secs(5))
@@ -229,6 +276,124 @@ async fn the_host_can_override_risk_and_drop_the_prefix() {
         "ran send_message"
     );
     assert!(exec.execute("mcp__mail__send_message", "{}").await.is_err());
+}
+
+/// Records the requests it is handed and answers each with a fixed action.
+struct Recorder {
+    seen: Arc<std::sync::Mutex<Vec<(String, ElicitRequestParams)>>>,
+    answer: ElicitResult,
+}
+
+impl Elicitation for Recorder {
+    fn elicit(
+        &self,
+        server: &str,
+        request: ElicitRequestParams,
+    ) -> futures::future::BoxFuture<'_, anyhow::Result<ElicitResult>> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((server.to_string(), request));
+        let answer = self.answer.clone();
+        Box::pin(async move { Ok(answer) })
+    }
+}
+
+#[tokio::test]
+async fn forwards_server_elicitation_to_the_hook() {
+    let url = serve().await;
+    let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook = Arc::new(Recorder {
+        seen: seen.clone(),
+        answer: ElicitResult::new(ElicitationAction::Accept)
+            .with_content(json!({"rating": "great"})),
+    });
+    let config = ToolsetConfig::new(client()).with_elicitation(hook);
+    let set = McpToolset::connect_specs(config, &[spec], &[]).await;
+
+    let out = set
+        .call(
+            "mcp__mail__collect_feedback",
+            json!({}),
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
+
+    // The server's elicitation reached our hook, and the Accept + content flowed back to it.
+    assert!(!out.failed, "{}", out.text);
+    assert_eq!(out.text, "accepted: great");
+
+    // Scoped so the guard is dropped before the `await` below.
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the hook was called exactly once");
+        assert_eq!(seen[0].0, "mail", "the hook knows which server asked");
+        match &seen[0].1 {
+            ElicitRequestParams::FormElicitationParams { message, .. } => {
+                assert_eq!(message, "How was it?");
+            }
+            other => panic!("expected a form elicitation, got {other:?}"),
+        }
+    }
+
+    set.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_hook_can_cancel_an_elicitation() {
+    let url = serve().await;
+    let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
+
+    // A hook that cancels round-trips distinctly from one that declines: `create_elicitation`
+    // forwards the hook's `ElicitResult` verbatim, so the server sees Cancel, not Decline.
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook = Arc::new(Recorder {
+        seen: seen.clone(),
+        answer: ElicitResult::new(ElicitationAction::Cancel),
+    });
+    let config = ToolsetConfig::new(client()).with_elicitation(hook);
+    let set = McpToolset::connect_specs(config, &[spec], &[]).await;
+
+    let out = set
+        .call(
+            "mcp__mail__collect_feedback",
+            json!({}),
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
+
+    // The hook ran and the server mapped Cancel to "cancelled", distinct from "declined".
+    assert!(!out.failed, "{}", out.text);
+    assert_eq!(out.text, "cancelled");
+    assert_eq!(seen.lock().unwrap().len(), 1, "the hook was called once");
+
+    set.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_a_hook_server_elicitation_is_declined() {
+    let url = serve().await;
+    let spec = ServerSpec::http("mail", url).with_bearer(TOKEN);
+
+    // No `with_elicitation`: the default declines, and the server sees a Decline.
+    let set = McpToolset::connect_specs(ToolsetConfig::new(client()), &[spec], &[]).await;
+    let out = set
+        .call(
+            "mcp__mail__collect_feedback",
+            json!({}),
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.text, "declined");
+    set.shutdown().await;
 }
 
 #[tokio::test]
