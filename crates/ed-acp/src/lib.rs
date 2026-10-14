@@ -33,6 +33,7 @@
 //! ```
 
 mod agent;
+pub mod auth;
 pub mod cli;
 pub mod content;
 pub mod llm;
@@ -51,6 +52,7 @@ use ed_mcp::{Connection, McpTool, McpToolset, SharedServer};
 use serde_json::Value;
 
 pub use agent_client_protocol;
+pub use auth::{AuthCtx, AuthProvider};
 pub use content::AudioHints;
 pub use ed_mcp;
 pub use llm::{LlmConfig, LlmEnv, Provider};
@@ -141,6 +143,14 @@ pub trait Profile: Send + Sync + 'static {
     /// the same name.
     fn builtin_mcp_servers(&self) -> Vec<&'static SharedServer> {
         Vec::new()
+    }
+
+    /// A sign-in of the product's own, for products whose credentials are not an API key in
+    /// the environment. With one, `initialize` advertises its method, the turn loop reads
+    /// its [`LlmConfig`], and `authenticate` and `logout` delegate to it. `None` keeps the
+    /// terminal `--setup` flow.
+    fn auth(&self) -> Option<Arc<dyn AuthProvider>> {
+        None
     }
 
     /// Advertised in `initialize`. Audio is accepted only when this says so.

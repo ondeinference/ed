@@ -15,7 +15,7 @@ use agent_client_protocol::schema::v1::{
     ConfigOptionUpdate, ContentBlock, ContentChunk, DeleteSessionRequest, DeleteSessionResponse,
     ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
     LogoutResponse, McpServer, MessageId, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, ResumeSessionRequest, ResumeSessionResponse, SessionConfigOption,
+    PromptResponse, RequestId, ResumeSessionRequest, ResumeSessionResponse, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOption, SessionConfigSelectOptions, SessionId,
     SessionInfo, SessionInfoUpdate, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, ToolCall,
@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use ed_mcp::{ClientInfo, McpToolset, ToolsetConfig};
 
+use crate::auth::{AuthCtx, AuthProvider};
 use crate::content as prompt;
 use crate::llm::{Delta, LlmClient, LlmConfig, LlmEnv};
 use crate::store::{SessionStore, StoredSession};
@@ -272,6 +273,8 @@ fn user_text(msg: &Value) -> String {
 #[derive(Clone)]
 pub struct AcpServer {
     profile: Arc<dyn Profile>,
+    /// The profile's own sign-in, when it has one (see [`Profile::auth`]).
+    auth: Option<Arc<dyn AuthProvider>>,
     /// The profile's toolsets, built once.
     toolsets: Arc<Vec<Arc<dyn Toolset>>>,
     env: LlmEnv,
@@ -295,11 +298,16 @@ impl AcpServer {
     pub fn new(profile: Arc<dyn Profile>, yolo: bool, surface: &'static str) -> Self {
         let env = profile.info().env;
         let data_dir = env.data_dir();
+        let auth = profile.auth();
         Self {
             toolsets: Arc::new(profile.toolsets()),
+            llm: Arc::new(Mutex::new(LlmClient::new(Self::config_for(
+                auth.as_deref(),
+                &env,
+            )))),
             profile,
+            auth,
             env,
-            llm: Arc::new(Mutex::new(LlmClient::new(LlmConfig::from_env(&env)))),
             yolo,
             surface,
             client_caps: Arc::default(),
@@ -307,6 +315,29 @@ impl AcpServer {
             models: Arc::default(),
             store: SessionStore::new(&data_dir),
             data_dir,
+        }
+    }
+
+    /// The provider's stored session when the profile has one, else the environment. A
+    /// signed-out provider yields the environment's endpoint with no key, so a stray
+    /// `ONDE_API_KEY` can't stand in for the product's own sign-in.
+    fn config_for(auth: Option<&dyn AuthProvider>, env: &LlmEnv) -> LlmConfig {
+        match auth {
+            None => LlmConfig::from_env(env),
+            Some(auth) => auth.llm_config().unwrap_or_else(|| LlmConfig {
+                api_key: None,
+                ..LlmConfig::from_env(env)
+            }),
+        }
+    }
+
+    /// The auth methods for `initialize`. A provider's method is offered whatever the client
+    /// can do; terminal auth only to a client that can run it.
+    pub fn auth_methods(&self, caps: &ClientCapabilities) -> Vec<AuthMethod> {
+        match &self.auth {
+            Some(auth) => vec![auth.method()],
+            None if supports_terminal_auth(caps) => auth_methods(),
+            None => Vec::new(),
         }
     }
 
@@ -332,7 +363,7 @@ impl AcpServer {
     /// `authenticate`, so the stored key has to be picked up here. The model list is only
     /// dropped when the configuration actually changed.
     pub async fn refresh_credentials(&self) -> bool {
-        let fresh = LlmConfig::from_env(&self.env);
+        let fresh = Self::config_for(self.auth.as_deref(), &self.env);
         let changed = fresh != *self.llm().config();
         if changed {
             tracing::info!(
@@ -349,7 +380,30 @@ impl AcpServer {
     pub async fn authenticate(
         &self,
         req: AuthenticateRequest,
+        connection: &ConnectionTo<Client>,
+        request_id: RequestId,
     ) -> agent_client_protocol::Result<AuthenticateResponse> {
+        if let Some(auth) = &self.auth {
+            if req.method_id != *auth.method().id() {
+                return Err(invalid(format!("unknown auth method {}", req.method_id.0)));
+            }
+            let caps = self.client_caps.lock().unwrap().clone();
+            auth.authenticate(AuthCtx {
+                connection,
+                request_id,
+                client_caps: &caps,
+            })
+            .await?;
+            // A new session means a new bearer, and possibly a different model list.
+            *self.models.lock().await = None;
+            *self.llm.lock().unwrap() =
+                LlmClient::new(Self::config_for(self.auth.as_deref(), &self.env));
+            return if self.has_api_key() {
+                Ok(AuthenticateResponse::new())
+            } else {
+                Err(self.auth_required())
+            };
+        }
         if &*req.method_id.0 != AUTH_METHOD_ID {
             return Err(invalid(format!("unknown auth method {}", req.method_id.0)));
         }
@@ -365,6 +419,19 @@ impl AcpServer {
     /// the others. A key exported in the agent's own environment can't be removed from here
     /// and keeps the agent signed in.
     pub async fn logout(&self) -> agent_client_protocol::Result<LogoutResponse> {
+        if let Some(auth) = &self.auth {
+            return match auth.logout().await {
+                Ok(()) => {
+                    *self.models.lock().await = None;
+                    *self.llm.lock().unwrap() =
+                        LlmClient::new(Self::config_for(self.auth.as_deref(), &self.env));
+                    Ok(LogoutResponse::new())
+                }
+                Err(e) => {
+                    Err(agent_client_protocol::Error::internal_error().data(format!("{e:#}")))
+                }
+            };
+        }
         let failures: Vec<String> = self
             .env
             .config_file_candidates()
@@ -396,6 +463,12 @@ impl AcpServer {
 
     /// `AUTH_REQUIRED`, naming this agent's setup command.
     pub fn auth_required(&self) -> agent_client_protocol::Error {
+        if let Some(auth) = &self.auth {
+            return agent_client_protocol::Error::auth_required().data(format!(
+                "Not signed in. Authenticate with the {} method.",
+                auth.method().name()
+            ));
+        }
         auth_required_error(self.profile.info().name)
     }
 
