@@ -34,8 +34,10 @@ use rmcp::model::{
     Implementation, ProgressNotificationParam, Request, ServerResult, Tool,
 };
 use rmcp::service::{NotificationContext, PeerRequestOptions, RequestContext, RunningService};
+use rmcp::transport::StreamableHttpClientTransport;
+#[cfg(not(target_os = "tvos"))]
+use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{ClientHandler, ErrorData as McpError, RoleClient, ServiceExt};
 use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
@@ -140,6 +142,14 @@ impl ClientInfo {
 #[derive(Clone)]
 pub enum Transport {
     /// Start `command args…` with extra environment variables and talk over its stdio.
+    ///
+    /// Stdio is only available on platforms that can spawn a child process.
+    /// On `target_os = "tvos"` the OS does not allow apps to create other
+    /// processes, so this variant is **not** supported on tvOS builds: the
+    /// matching arm in [`Connection::connect_with`] returns an error at
+    /// runtime instead of compiling out the variant. Use [`Transport::Http`]
+    /// for tvOS; if you only know the transport at runtime, branch on the
+    /// current `target_os` before constructing a `Stdio` spec.
     Stdio {
         command: PathBuf,
         args: Vec<String>,
@@ -313,12 +323,30 @@ pub struct Connection {
 
 impl Connection {
     /// Connect to `spec`, run the handshake and list its tools, each within `timeout`.
+    ///
+    /// # Errors
+    ///
+    /// - On tvOS, connecting a `Transport::Stdio` spec always fails with a
+    ///   "this platform can't run MCP servers as processes" error — tvOS does
+    ///   not allow child processes. Use [`Transport::Http`] on that target.
+    /// - On every platform, spawning the child, completing the handshake and
+    ///   listing tools are each independently bounded by `timeout` and may
+    ///   fail or time out.
     pub async fn connect(spec: &ServerSpec, info: &ClientInfo, timeout: Duration) -> Result<Self> {
         Self::connect_with(spec, info, None, timeout).await
     }
 
     /// Connect to `spec`, with an optional [`Elicitation`] hook for server-initiated
     /// `elicitation/create` requests. [`Connection::connect`] is this with no hook.
+    ///
+    /// # Errors
+    ///
+    /// - On tvOS, connecting a `Transport::Stdio` spec always fails with a
+    ///   "this platform can't run MCP servers as processes" error — tvOS does
+    ///   not allow child processes. Use [`Transport::Http`] on that target.
+    /// - On every platform, spawning the child, completing the handshake and
+    ///   listing tools are each independently bounded by `timeout` and may
+    ///   fail or time out.
     pub async fn connect_with(
         spec: &ServerSpec,
         info: &ClientInfo,
@@ -332,12 +360,21 @@ impl Connection {
             elicitation,
         };
         let handshake = match &spec.transport {
+            #[cfg(not(target_os = "tvos"))]
             Transport::Stdio { command, args, env } => {
                 let mut cmd = tokio::process::Command::new(command);
                 cmd.args(args).envs(env.iter().map(|(k, v)| (k, v)));
                 let transport = TokioChildProcess::new(cmd)
                     .with_context(|| format!("starting {}", command.display()))?;
                 tokio::time::timeout(timeout, handler.serve(transport)).await
+            }
+            // tvOS can't start a process, so there is no stdio transport to offer.
+            #[cfg(target_os = "tvos")]
+            Transport::Stdio { command, .. } => {
+                bail!(
+                    "can't start {}: this platform can't run MCP servers as processes",
+                    command.display()
+                );
             }
             Transport::Http {
                 url,
