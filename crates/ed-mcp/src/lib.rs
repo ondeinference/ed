@@ -34,8 +34,10 @@ use rmcp::model::{
     Implementation, ProgressNotificationParam, Request, ServerResult, Tool,
 };
 use rmcp::service::{NotificationContext, PeerRequestOptions, RequestContext, RunningService};
+use rmcp::transport::StreamableHttpClientTransport;
+#[cfg(not(target_os = "tvos"))]
+use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{ClientHandler, ErrorData as McpError, RoleClient, ServiceExt};
 use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
@@ -332,12 +334,21 @@ impl Connection {
             elicitation,
         };
         let handshake = match &spec.transport {
+            #[cfg(not(target_os = "tvos"))]
             Transport::Stdio { command, args, env } => {
                 let mut cmd = tokio::process::Command::new(command);
                 cmd.args(args).envs(env.iter().map(|(k, v)| (k, v)));
                 let transport = TokioChildProcess::new(cmd)
                     .with_context(|| format!("starting {}", command.display()))?;
                 tokio::time::timeout(timeout, handler.serve(transport)).await
+            }
+            // tvOS can't start a process, so there is no stdio transport to offer.
+            #[cfg(target_os = "tvos")]
+            Transport::Stdio { command, .. } => {
+                bail!(
+                    "can't start {}: this platform can't run MCP servers as processes",
+                    command.display()
+                );
             }
             Transport::Http {
                 url,

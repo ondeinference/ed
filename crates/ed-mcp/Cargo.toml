@@ -16,13 +16,19 @@ agent-client-protocol = { workspace = true, optional = true }
 ed-agent = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 http = "1"
-rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 tokio = { workspace = true, features = ["sync", "time", "process", "macros", "io-std", "io-util", "rt"] }
 tokio-util.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+
+# Spawning an MCP server as a child process needs `exec`, which Apple hides on tvOS (`libc`
+# has no `execv` there, so `nix` under `process-wrap` doesn't compile). The stdio transport
+# is everywhere else.
+[target.'cfg(not(target_os = "tvos"))'.dependencies]
+rmcp = { workspace = true, features = ["transport-child-process"] }
 
 [features]
 # Map ACP `session/new` MCP server lists (`McpToolset::connect`, `ServerSpec::from_acp`).
