@@ -24,10 +24,10 @@ serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 
-# Spawning an MCP server as a child process needs `exec`, which Apple hides on tvOS (`libc`
-# has no `execv` there, so `nix` under `process-wrap` doesn't compile). The stdio transport
-# is everywhere else.
-[target.'cfg(not(target_os = "tvos"))'.dependencies]
+# Spawning an MCP server as a child process needs `exec`, which Apple hides on tvOS and
+# watchOS (`libc` has no `execv` there, so `nix` under `process-wrap` doesn't compile). The
+# stdio transport is everywhere else.
+[target.'cfg(not(any(target_os = "tvos", target_os = "watchos")))'.dependencies]
 rmcp = { workspace = true, features = ["transport-child-process"] }
 
 [features]

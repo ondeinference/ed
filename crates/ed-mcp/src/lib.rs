@@ -35,7 +35,7 @@ use rmcp::model::{
 };
 use rmcp::service::{NotificationContext, PeerRequestOptions, RequestContext, RunningService};
 use rmcp::transport::StreamableHttpClientTransport;
-#[cfg(not(target_os = "tvos"))]
+#[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::{ClientHandler, ErrorData as McpError, RoleClient, ServiceExt};
@@ -144,12 +144,12 @@ pub enum Transport {
     /// Start `command args…` with extra environment variables and talk over its stdio.
     ///
     /// Stdio is only available on platforms that can spawn a child process.
-    /// On `target_os = "tvos"` the OS does not allow apps to create other
-    /// processes, so this variant is **not** supported on tvOS builds: the
-    /// matching arm in [`Connection::connect_with`] returns an error at
-    /// runtime instead of compiling out the variant. Use [`Transport::Http`]
-    /// for tvOS; if you only know the transport at runtime, branch on the
-    /// current `target_os` before constructing a `Stdio` spec.
+    /// On `target_os = "tvos"` and `target_os = "watchos"` the OS does not allow
+    /// apps to create other processes, so this variant is **not** supported on
+    /// tvOS or watchOS builds: the matching arm in [`Connection::connect_with`]
+    /// returns an error at runtime instead of compiling out the variant. Use
+    /// [`Transport::Http`] there; if you only know the transport at runtime,
+    /// branch on the current `target_os` before constructing a `Stdio` spec.
     Stdio {
         command: PathBuf,
         args: Vec<String>,
@@ -360,7 +360,7 @@ impl Connection {
             elicitation,
         };
         let handshake = match &spec.transport {
-            #[cfg(not(target_os = "tvos"))]
+            #[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
             Transport::Stdio { command, args, env } => {
                 let mut cmd = tokio::process::Command::new(command);
                 cmd.args(args).envs(env.iter().map(|(k, v)| (k, v)));
@@ -368,8 +368,8 @@ impl Connection {
                     .with_context(|| format!("starting {}", command.display()))?;
                 tokio::time::timeout(timeout, handler.serve(transport)).await
             }
-            // tvOS can't start a process, so there is no stdio transport to offer.
-            #[cfg(target_os = "tvos")]
+            // tvOS and watchOS can't start a process, so there is no stdio transport to offer.
+            #[cfg(any(target_os = "tvos", target_os = "watchos"))]
             Transport::Stdio { command, .. } => {
                 bail!(
                     "can't start {}: this platform can't run MCP servers as processes",
