@@ -16,13 +16,21 @@ agent-client-protocol = { workspace = true, optional = true }
 ed-agent = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 http = "1"
-rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 tokio = { workspace = true, features = ["sync", "time", "process", "macros", "io-std", "io-util", "rt"] }
 tokio-util.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+
+# rmcp's `reqwest` feature turns on reqwest's aws-lc provider, which doesn't build for
+# arm64_32; watchOS takes `reqwest-native-tls` (Security.framework) instead.
+[target.'cfg(not(target_os = "watchos"))'.dependencies]
+rmcp = { workspace = true, features = ["reqwest"] }
+
+[target.'cfg(target_os = "watchos")'.dependencies]
+rmcp = { workspace = true, features = ["reqwest-native-tls"] }
 
 # Spawning an MCP server as a child process needs `exec`, which Apple hides on tvOS and
 # watchOS (`libc` has no `execv` there, so `nix` under `process-wrap` doesn't compile). The

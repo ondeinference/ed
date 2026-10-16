@@ -24,7 +24,6 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util.workspace = true
 futures.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -33,6 +32,16 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 directories.workspace = true
 base64.workspace = true
+
+# reqwest 0.13's `rustls` feature is the aws-lc provider, whose C code doesn't build for
+# arm64_32 (`aws-lc-sys` takes it for a 64-bit limb target), and `ring` asserts 64-bit
+# pointers on aarch64. watchOS uses `native-tls`, which is Security.framework and needs no
+# rustls provider at all.
+[target.'cfg(not(target_os = "watchos"))'.dependencies]
+reqwest = { workspace = true, features = ["rustls"] }
+
+[target.'cfg(target_os = "watchos")'.dependencies]
+reqwest = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
