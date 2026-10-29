@@ -207,3 +207,158 @@ mod provider_auth {
         assert_eq!(fake.authenticated.load(Ordering::SeqCst), 1);
     }
 }
+
+mod model_list {
+    use std::sync::{Arc, Mutex};
+
+    use agent_client_protocol::schema::ProtocolVersion;
+    use agent_client_protocol::schema::v1::{InitializeRequest, NewSessionRequest};
+    use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
+    use async_trait::async_trait;
+    use ed_acp::{
+        AgentInfo, AuthCtx, AuthProvider, LlmConfig, LlmEnv, Profile, PromptCtx, Provider,
+        ServeOptions, Toolset,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serves `GET /models` with whatever ids are in `models` at the time of the request.
+    async fn models_endpoint(models: Arc<Mutex<Vec<&'static str>>>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let models = models.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let data: Vec<_> = models
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|id| serde_json::json!({"id": id}))
+                        .collect();
+                    let body = serde_json::json!({"object": "list", "data": data}).to_string();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        base
+    }
+
+    struct Signed(String);
+
+    #[async_trait]
+    impl AuthProvider for Signed {
+        fn method(&self) -> agent_client_protocol::schema::v1::AuthMethod {
+            agent_client_protocol::schema::v1::AuthMethod::Agent(
+                agent_client_protocol::schema::v1::AuthMethodAgent::new("fake", "Sign in"),
+            )
+        }
+
+        fn llm_config(&self) -> Option<LlmConfig> {
+            Some(LlmConfig {
+                provider: Provider::OpenAi,
+                base_url: self.0.clone(),
+                api_key: Some("token".into()),
+                model: "tier-a".into(),
+            })
+        }
+
+        async fn authenticate(&self, _ctx: AuthCtx<'_>) -> agent_client_protocol::Result<()> {
+            Ok(())
+        }
+
+        async fn logout(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Agentless(String);
+
+    impl Profile for Agentless {
+        fn info(&self) -> AgentInfo {
+            AgentInfo {
+                name: "model-list-agent",
+                display_name: "Model list",
+                version: "0.0.1",
+                env: LlmEnv {
+                    prefix: "ED_ACP_MODEL_LIST_TEST",
+                    dir_name: "ed-acp-model-list-test",
+                    default_model: "tier-a",
+                },
+            }
+        }
+
+        fn system_prompt(&self, _ctx: &PromptCtx<'_>) -> String {
+            String::new()
+        }
+
+        fn toolsets(&self) -> Vec<Arc<dyn Toolset>> {
+            Vec::new()
+        }
+
+        fn auth(&self) -> Option<Arc<dyn AuthProvider>> {
+            Some(Arc::new(Signed(self.0.clone())))
+        }
+    }
+
+    fn offered(response: &impl serde::Serialize) -> Vec<String> {
+        let json = serde_json::to_value(response).unwrap();
+        json["configOptions"][0]["options"]
+            .as_array()
+            .expect("a model option")
+            .iter()
+            .map(|o| o["value"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_new_thread_lists_models_again() {
+        let models = Arc::new(Mutex::new(vec!["tier-a"]));
+        let base = models_endpoint(models.clone()).await;
+        let (agent_end, client_end) = Channel::duplex();
+        let opts = ServeOptions {
+            yolo: false,
+            surface: "app",
+        };
+        tokio::spawn(ed_acp::serve(Arc::new(Agentless(base)), opts, agent_end));
+        let cwd = std::env::temp_dir();
+
+        Client
+            .builder()
+            .connect_with(client_end, |conn: ConnectionTo<Agent>| async move {
+                conn.send_request(InitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                conn.send_request(agent_client_protocol::schema::v1::AuthenticateRequest::new(
+                    "fake",
+                ))
+                .block_task()
+                .await?;
+
+                let first = conn
+                    .send_request(NewSessionRequest::new(cwd.clone()))
+                    .block_task()
+                    .await?;
+                assert_eq!(offered(&first), ["tier-a"]);
+
+                // The endpoint's list changes, as it does when a tier is enabled in the console.
+                *models.lock().unwrap() = vec!["tier-a", "tier-b"];
+                let second = conn
+                    .send_request(NewSessionRequest::new(cwd.clone()))
+                    .block_task()
+                    .await?;
+                assert_eq!(offered(&second), ["tier-a", "tier-b"]);
+                Ok(())
+            })
+            .await
+            .expect("conversation");
+    }
+}
