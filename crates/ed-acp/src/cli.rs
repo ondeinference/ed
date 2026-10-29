@@ -142,8 +142,13 @@ pub async fn setup(info: &AgentInfo) -> anyhow::Result<()> {
     });
     print!("Verifying the key with {}… ", provider.display_name());
     std::io::stdout().flush()?;
-    match LlmClient::new(config).check_auth().await {
-        Ok(()) => println!("OK"),
+    let configured = config.model.clone();
+    match LlmClient::new(config).verify_key().await {
+        Ok(model) if model != configured => {
+            println!("OK\n{configured} isn't available to this key; using {model}.");
+            vars.push((info.env.var("MODEL"), model));
+        }
+        Ok(_) => println!("OK"),
         Err(e) => anyhow::bail!("\nKey check failed: {e:#}\nNothing was written."),
     }
 

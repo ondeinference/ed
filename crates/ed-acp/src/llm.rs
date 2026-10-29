@@ -442,6 +442,92 @@ mod tests {
         assert_eq!(parsed.data[0].owned_by.as_deref(), Some("onde"));
         assert_eq!(parsed.data[1].owned_by, None);
     }
+
+    /// An Onde Cloud stand-in for one app allowed only `onde-air`: `good:key` is accepted,
+    /// other keys get 401, and any other model gets 503, as Onde Cloud answers a model outside
+    /// the app's allowed set. Returns the base URL.
+    async fn app_limited_to_onde_air() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // Headers, then as much body as Content-Length says.
+                    let request = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                break text;
+                            }
+                        }
+                    };
+                    let authorized = request.contains("Bearer good:key");
+                    let (status, body) = if !authorized {
+                        ("401 Unauthorized", r#"{"error":{}}"#)
+                    } else if request.starts_with("GET /v1/models") {
+                        ("200 OK", r#"{"object":"list","data":[{"id":"onde-air"}]}"#)
+                    } else if request.contains(r#""model":"onde-air""#) {
+                        ("200 OK", r#"{"choices":[]}"#)
+                    } else {
+                        (
+                            "503 Service Unavailable",
+                            r#"{"error":{"message":"model onde-kkk is not available"}}"#,
+                        )
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\n\
+                         content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    fn client(base_url: &str, key: &str, model: &str) -> LlmClient {
+        LlmClient::new(LlmConfig {
+            provider: Provider::Onde,
+            base_url: base_url.to_string(),
+            api_key: Some(key.to_string()),
+            model: model.to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn verify_key_falls_back_to_a_model_the_app_allows() {
+        let url = app_limited_to_onde_air().await;
+        // Regression: a new app without the default tier failed setup with exit code 1.
+        let fallback = client(&url, "good:key", DEFAULT_MODEL).verify_key().await;
+        assert_eq!(fallback.unwrap(), "onde-air");
+        let allowed = client(&url, "good:key", "onde-air").verify_key().await;
+        assert_eq!(allowed.unwrap(), "onde-air");
+        let err = client(&url, "bad:key", DEFAULT_MODEL)
+            .verify_key()
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("rejected the API key"), "{err:#}");
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -594,15 +680,48 @@ impl LlmClient {
     /// Verify the configured key with a minimal chat completion.
     /// Returns `Err` when no key is set, the key is rejected, or the endpoint is unreachable.
     pub async fn check_auth(&self) -> Result<()> {
+        self.verify_key().await.map(drop)
+    }
+
+    /// [`Self::check_auth`], returning the model the check passed with: the configured one,
+    /// unless the endpoint refuses it while listing others for this key. Onde Cloud answers a
+    /// model outside an app's allowed set with 503 "not available", so a new app limited to,
+    /// say, `onde-air` would otherwise fail setup on the default tier. Then the first listed
+    /// model is tried and returned, for the caller to store as `<PREFIX>_MODEL`.
+    pub async fn verify_key(&self) -> Result<String> {
         let provider = self.config.provider;
+        let model = &self.config.model;
         if provider == Provider::Local {
-            return Ok(());
+            return Ok(model.clone());
         }
         let Some(key) = &self.config.api_key else {
             bail!("no {} configured", provider.key_var());
         };
+        let (status, text) = self.ping(key, model).await?;
+        if status.is_success() {
+            return Ok(model.clone());
+        }
+        if matches!(status.as_u16(), 401 | 403) {
+            bail!(
+                "{} rejected the API key ({status})",
+                provider.display_name()
+            );
+        }
+        // The key got past authentication; the model may be what was refused.
+        if let Ok(models) = self.models().await
+            && !models.iter().any(|m| &m.id == model)
+            && let Some(other) = models.first()
+            && self.ping(key, &other.id).await?.0.is_success()
+        {
+            return Ok(other.id.clone());
+        }
+        bail!("{} returned {status}: {text}", provider.display_name());
+    }
+
+    /// A one-token, non-streaming chat completion with `model`: its status and body.
+    async fn ping(&self, key: &str, model: &str) -> Result<(reqwest::StatusCode, String)> {
         let body = json!({
-            "model": self.config.model,
+            "model": model,
             "messages": [{ "role": "user", "content": "ping" }],
             "max_tokens": 1,
             "stream": false,
@@ -614,19 +733,10 @@ impl LlmClient {
             .bearer_auth(key)
             .send()
             .await
-            .with_context(|| format!("reaching {}", provider.display_name()))?;
+            .with_context(|| format!("reaching {}", self.config.provider.display_name()))?;
         let status = resp.status();
-        if matches!(status.as_u16(), 401 | 403) {
-            bail!(
-                "{} rejected the API key ({status})",
-                provider.display_name()
-            );
-        }
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            bail!("{} returned {status}: {text}", provider.display_name());
-        }
-        Ok(())
+        let text = resp.text().await.unwrap_or_default();
+        Ok((status, text))
     }
 
     /// List the models the configured endpoint serves (`GET {base_url}/models`).
