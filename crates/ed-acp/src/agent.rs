@@ -29,7 +29,7 @@ use ed_mcp::{ClientInfo, McpToolset, ToolsetConfig};
 
 use crate::auth::{AuthCtx, AuthProvider};
 use crate::content as prompt;
-use crate::llm::{Delta, LlmClient, LlmConfig, LlmEnv};
+use crate::llm::{Delta, EndpointError, LlmClient, LlmConfig, LlmEnv};
 use crate::store::{SessionStore, StoredSession};
 use crate::tools::{self, ToolCtx, ToolOutcome, Toolset, absolutize, normalize};
 use crate::{CommandCtx, Profile, PromptCtx, SessionCtx};
@@ -215,6 +215,16 @@ pub fn session_title(prompt: &str) -> String {
     } else {
         let cut: String = first.chars().take(MAX - 1).collect();
         format!("{}…", cut.trim_end())
+    }
+}
+
+/// Map a failed turn to an ACP internal error. Endpoint failures carry `{ message, status }`
+/// so hosts can show the provider's message without parsing it out of a string.
+fn internal(e: &anyhow::Error) -> agent_client_protocol::Error {
+    match e.chain().find_map(|c| c.downcast_ref::<EndpointError>()) {
+        Some(ep) => agent_client_protocol::Error::internal_error()
+            .data(json!({ "message": ep.message, "status": ep.status })),
+        None => agent_client_protocol::Error::internal_error().data(format!("{e:#}")),
     }
 }
 
@@ -1101,9 +1111,7 @@ impl AcpServer {
             Err(e) if e.downcast_ref::<UnknownSession>().is_some() => {
                 responder.respond_with_error(invalid(e.to_string()))
             }
-            Err(e) => responder.respond_with_error(
-                agent_client_protocol::Error::internal_error().data(format!("{e:#}")),
-            ),
+            Err(e) => responder.respond_with_error(internal(&e)),
         }
     }
 
@@ -1394,6 +1402,28 @@ impl std::error::Error for UnknownSession {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::EndpointError;
+
+    #[test]
+    fn internal_exposes_endpoint_status_and_message() {
+        let e = anyhow::Error::new(EndpointError {
+            source_name: "LLM endpoint".into(),
+            status: 429,
+            message: "slow down".into(),
+        })
+        .context("running turn");
+        let err = internal(&e);
+        assert_eq!(
+            err.data,
+            Some(json!({ "message": "slow down", "status": 429 }))
+        );
+    }
+
+    #[test]
+    fn internal_falls_back_to_string_data() {
+        let err = internal(&anyhow::anyhow!("boom"));
+        assert_eq!(err.data, Some(json!("boom")));
+    }
 
     #[test]
     fn iso8601_known_dates() {

@@ -253,9 +253,116 @@ impl LlmConfig {
     }
 }
 
+/// A non-2xx answer from the LLM endpoint, with the provider's message pulled out of the body.
+#[derive(Debug, Clone)]
+pub struct EndpointError {
+    pub source_name: String,
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for EndpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match reqwest::StatusCode::from_u16(self.status) {
+            Ok(status) => write!(
+                f,
+                "{} returned {status}: {}",
+                self.source_name, self.message
+            ),
+            Err(_) => write!(
+                f,
+                "{} returned {}: {}",
+                self.source_name, self.status, self.message
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EndpointError {}
+
+/// Best human-readable text in an error body: `error.message`, `message`, or a string `error`
+/// from a JSON body; otherwise the trimmed raw text, or the status reason when it is empty.
+fn endpoint_message(status: u16, body: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<Value>(body) {
+        let found = v
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| v.get("message").and_then(Value::as_str))
+            .or_else(|| v.get("error").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|m| !m.is_empty());
+        if let Some(m) = found {
+            return m.to_string();
+        }
+    }
+    let text = body.trim();
+    if text.is_empty() {
+        return reqwest::StatusCode::from_u16(status)
+            .ok()
+            .and_then(|s| s.canonical_reason())
+            .unwrap_or("no response body")
+            .to_string();
+    }
+    text.to_string()
+}
+
+async fn endpoint_error(source_name: &str, resp: reqwest::Response) -> anyhow::Error {
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    anyhow::Error::new(EndpointError {
+        source_name: source_name.to_string(),
+        status,
+        message: endpoint_message(status, &body),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_message_prefers_error_message() {
+        let body = r#"{"error":{"message":"Rate limit reached","type":"rate_limit"}}"#;
+        assert_eq!(endpoint_message(429, body), "Rate limit reached");
+    }
+
+    #[test]
+    fn endpoint_message_falls_back_to_top_level_fields() {
+        assert_eq!(endpoint_message(400, r#"{"message":"bad"}"#), "bad");
+        assert_eq!(endpoint_message(400, r#"{"error":"nope"}"#), "nope");
+    }
+
+    #[test]
+    fn endpoint_message_keeps_non_json_text() {
+        assert_eq!(
+            endpoint_message(502, "  <html>Bad Gateway</html>\n"),
+            "<html>Bad Gateway</html>"
+        );
+    }
+
+    #[test]
+    fn endpoint_message_json_without_message_keeps_raw() {
+        let body = r#"{"detail":"x"}"#;
+        assert_eq!(endpoint_message(422, body), body);
+    }
+
+    #[test]
+    fn endpoint_message_empty_body_uses_reason() {
+        assert_eq!(endpoint_message(503, "  "), "Service Unavailable");
+    }
+
+    #[test]
+    fn endpoint_error_display_keeps_prefix() {
+        let e = EndpointError {
+            source_name: "LLM endpoint".into(),
+            status: 429,
+            message: "slow down".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "LLM endpoint returned 429 Too Many Requests: slow down"
+        );
+    }
 
     const ENV: LlmEnv = LlmEnv {
         prefix: "SPLITFIRE",
@@ -623,8 +730,7 @@ impl LlmClient {
             );
         }
         if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            bail!("{} returned {status}: {text}", provider.display_name());
+            return Err(endpoint_error(provider.display_name(), resp).await);
         }
         Ok(())
     }
@@ -651,9 +757,7 @@ impl LlmClient {
                 .context("sending models request")?;
         }
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("models endpoint returned {status}: {text}");
+            return Err(endpoint_error("models endpoint", resp).await);
         }
         let mut models = resp
             .json::<ModelsResponse>()
@@ -709,9 +813,7 @@ impl LlmClient {
                 .context("sending chat completion request")?;
         }
         if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("LLM endpoint returned {status}: {text}");
+            return Err(endpoint_error("LLM endpoint", resp).await);
         }
 
         let mut out = Completion::default();
