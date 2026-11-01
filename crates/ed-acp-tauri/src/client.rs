@@ -102,8 +102,10 @@ pub fn status(host: &HostConfig) -> AgentStatus {
 /// What `<agent> --setup` does for Onde Inference, minus the terminal: check the key with Onde
 /// Cloud, then write it to the agent's `env` file (mode 0600). With a `model` it is written as
 /// `<PREFIX>_MODEL` beside the key and used for the check, so the agent doesn't fall back to a
-/// default tier the key isn't allowed to call. In the App Store sandbox that file lives in
-/// the app's container, so a key stored by the command-line agent isn't shared.
+/// default tier the key isn't allowed to call; without one, or when the key can't call it,
+/// the model the check passed with is written instead (see `LlmClient::verify_key`). In the App
+/// Store sandbox that file lives in the app's container, so a key stored by the command-line
+/// agent isn't shared.
 pub async fn set_api_key(host: &HostConfig, key: &str, model: Option<&str>) -> Result<(), String> {
     let info = host.info();
     let key = key.trim();
@@ -124,10 +126,16 @@ pub async fn set_api_key(host: &HostConfig, key: &str, model: Option<&str>) -> R
             .map(|(_, v)| v.clone())
             .or_else(|| std::env::var(name).ok())
     });
-    LlmClient::new(config)
-        .check_auth()
+    let configured = config.model.clone();
+    let verified = LlmClient::new(config)
+        .verify_key()
         .await
         .map_err(|e| format!("Onde Cloud rejected the key: {e:#}"))?;
+    if verified != configured {
+        let model_var = info.env.var("MODEL");
+        vars.retain(|(k, _)| *k != model_var);
+        vars.push((model_var, verified));
+    }
 
     let dir = info
         .env

@@ -298,7 +298,7 @@ pub struct AcpServer {
     client_caps: Arc<Mutex<ClientCapabilities>>,
     sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     /// Models offered for selection, fetched from `GET /models` on first use and dropped
-    /// when credentials change.
+    /// when credentials change or a thread opens.
     models: Arc<tokio::sync::Mutex<Option<Vec<String>>>>,
     store: SessionStore,
     data_dir: PathBuf,
@@ -509,6 +509,12 @@ impl AcpServer {
             roots,
             mcp,
         })
+    }
+
+    /// Forget the cached model list, so the next `models()` asks the endpoint again. Called when a
+    /// thread opens: an endpoint scoped to an app can change what it lists between threads.
+    async fn forget_models(&self) {
+        *self.models.lock().await = None;
     }
 
     /// The selectable models. Falls back to just the configured model if the endpoint
@@ -747,6 +753,7 @@ impl AcpServer {
         self.sessions.lock().unwrap().insert(id.clone(), session);
         // Saved right away so the thread survives a restart before its first prompt.
         self.persist(&id).await;
+        self.forget_models().await;
         let options = self.config_options(&model, self.yolo).await;
         Ok(NewSessionResponse::new(id).config_options(options))
     }
@@ -1003,6 +1010,7 @@ impl AcpServer {
         if history_lost {
             self.notify_history_lost(connection, &id)?;
         }
+        self.forget_models().await;
         Ok(LoadSessionResponse::new().config_options(self.session_config_options(&id).await?))
     }
 
@@ -1019,6 +1027,7 @@ impl AcpServer {
         if history_lost {
             self.notify_history_lost(connection, &id)?;
         }
+        self.forget_models().await;
         Ok(ResumeSessionResponse::new().config_options(self.session_config_options(&id).await?))
     }
 
