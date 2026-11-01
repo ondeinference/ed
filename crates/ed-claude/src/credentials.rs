@@ -70,9 +70,13 @@ pub(crate) fn store_in(dir: &Path, api_key: &str, model: Option<&str>) -> Result
     if api_key.is_empty() || api_key.contains(['\n', '\r']) {
         return Err("the API key is empty or spans lines".to_string());
     }
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    if model.is_some_and(|m| m.contains(['\n', '\r'])) {
+        return Err("the model name spans lines".to_string());
+    }
     std::fs::create_dir_all(dir).map_err(|e| format!("create {dir:?}: {e}"))?;
     let mut body = format!("{KEY_VAR}={api_key}\n");
-    if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
+    if let Some(model) = model {
         body.push_str(&format!("{MODEL_VAR}={model}\n"));
     }
     let path = dir.join(FILE);
@@ -152,6 +156,14 @@ mod tests {
         let dir = scratch("reject");
         assert!(store_in(&dir, "", None).is_err());
         assert!(store_in(&dir, "a\nED_CLAUDE_MODEL=x", None).is_err());
+    }
+
+    #[test]
+    fn rejects_a_model_that_would_inject_a_line() {
+        let dir = scratch("reject-model");
+        assert!(store_in(&dir, "sk-ant-1", Some("x\nED_CLAUDE_API_KEY=sk-other")).is_err());
+        assert!(store_in(&dir, "sk-ant-1", Some("x\r\ny")).is_err());
+        assert_eq!(load_from(&dir), None, "nothing was written");
     }
 
     #[cfg(unix)]
