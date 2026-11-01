@@ -13,10 +13,15 @@ use ed_acp_testkit::{MockStats, Script, Step, TEST_KEY, start_mock_llm, temp_dir
 use ed_claude::{Claude, ClaudeAuth, DEFAULT_MODEL, MODELS, credentials};
 use serde_json::json;
 
+/// Held by every test that changes the process environment or runs the agent, which reads it,
+/// so a `set_var` never overlaps another thread's `getenv`.
+static ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[test]
 fn no_key_means_no_llm_config_even_with_provider_env_set() {
+    let _env = ENV.blocking_lock();
     let dir = temp_dir("ed-claude-nokey");
-    // SAFETY: only this test touches these variables, and nothing reads them concurrently.
+    // SAFETY: ENV is held, and the other test that reads the environment waits for it.
     unsafe {
         std::env::set_var("OPENAI_API_KEY", "sk-from-env");
         std::env::set_var("ED_CLAUDE_API_KEY", "sk-from-env");
@@ -49,11 +54,12 @@ fn llm_config_uses_the_stored_key_and_model() {
 
 #[tokio::test]
 async fn a_streamed_tool_call_turn_round_trips() {
+    let _env = ENV.lock().await;
     let data = temp_dir("ed-claude-data");
     let key_dir = temp_dir("ed-claude-keys");
     let work = temp_dir("ed-claude-work");
     std::fs::write(work.join("hello.txt"), "hi").unwrap();
-    // SAFETY: set before the agent starts; only the data dir, no credentials.
+    // SAFETY: ENV is held for the whole turn; only the data dir, no credentials.
     unsafe { std::env::set_var("ED_CLAUDE_DATA_DIR", &data) };
     credentials::store_in_for_tests(&key_dir, TEST_KEY, None);
 
