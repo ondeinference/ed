@@ -119,6 +119,25 @@ impl HostConfig {
     }
 }
 
+/// An agent that runs as a child process speaking ACP on stdio, for [`AgentState::external`].
+#[derive(Clone)]
+pub struct ExternalConfig {
+    /// The executable, resolved by the host (a GUI app's `PATH` is minimal).
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    /// Added to the child's environment.
+    pub env: Vec<(String, String)>,
+    /// Reported to the agent as `clientInfo.name`.
+    pub client_name: &'static str,
+    /// `clientInfo.version`.
+    pub client_version: &'static str,
+    /// As [`HostConfig::roots`].
+    pub roots: fn(&AppHandle, Option<&Path>) -> Result<Roots, String>,
+    /// As [`HostConfig::mcp_servers`].
+    pub mcp_servers: fn(&AppHandle, Option<String>) -> Vec<McpServer>,
+    pub events: Events,
+}
+
 /// Response returned by `agent_status`.
 #[tsync]
 #[derive(Debug, Clone, Serialize, Deserialize)]
