@@ -43,6 +43,13 @@ pub trait AuthProvider: Send + Sync {
     /// is picked up without a restart.
     fn llm_config(&self) -> Option<LlmConfig>;
 
+    /// The models to offer in the picker, when the provider knows them without asking the
+    /// endpoint (one whose `/models` is missing or needs other credentials). `None` leaves it
+    /// to `<PREFIX>_MODELS`, then the endpoint.
+    fn models(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// Run the sign-in. An existing session passes. An `Err` is shown to the user as is.
     async fn authenticate(&self, ctx: AuthCtx<'_>) -> agent_client_protocol::Result<()>;
 

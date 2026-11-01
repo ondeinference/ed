@@ -2097,6 +2097,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed-claude"
+version = "1.3.5"
+dependencies = [
+ "agent-client-protocol",
+ "anyhow",
+ "async-trait",
+ "directories",
+ "ed-acp",
+ "ed-acp-testkit",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ed-mcp"
 version = "1.3.5"
 dependencies = [

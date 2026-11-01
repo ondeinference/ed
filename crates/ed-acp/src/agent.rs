@@ -517,12 +517,15 @@ impl AcpServer {
         let llm = self.llm();
         let default = llm.model().to_string();
         // An explicit list wins; editors show this list as the model picker.
-        let configured: Vec<String> = std::env::var(self.env.var("MODELS"))
-            .unwrap_or_default()
-            .split(',')
-            .map(|m| m.trim().to_string())
-            .filter(|m| !m.is_empty())
-            .collect();
+        let configured: Vec<String> = match self.auth.as_ref().and_then(|a| a.models()) {
+            Some(models) => models,
+            None => std::env::var(self.env.var("MODELS"))
+                .unwrap_or_default()
+                .split(',')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect(),
+        };
         let mut ids = if !configured.is_empty() {
             configured
         } else {
