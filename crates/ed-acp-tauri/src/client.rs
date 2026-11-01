@@ -679,7 +679,9 @@ impl AgentState {
         Ok(())
     }
 
-    /// Sign out: the agent forgets its stored session.
+    /// Sign out. The in-process agent forgets its stored session. An external agent's child
+    /// process is ended instead, and its own credentials are left alone, so the next connection
+    /// starts it still signed in.
     pub async fn logout(&self, app: &AppHandle) -> Result<(), String> {
         // An external agent keeps its session in its own CLI, which this app doesn't touch.
         // Ending the process is all that signing out of it means here.
