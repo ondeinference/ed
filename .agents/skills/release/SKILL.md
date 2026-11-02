@@ -31,9 +31,11 @@ explicitly:
 ed-agent        = { version = "X.Y.Z", path = "crates/ed-agent" }
 ed-mcp          = { version = "X.Y.Z", path = "crates/ed-mcp" }
 ed-acp          = { version = "X.Y.Z", path = "crates/ed-acp" }
+ed-acp-tauri    = { version = "X.Y.Z", path = "crates/ed-acp-tauri" }
 ed-acp-tui      = { version = "X.Y.Z", path = "crates/ed-acp-tui" }
 ed-acp-testkit  = { version = "X.Y.Z", path = "crates/ed-acp-testkit" }
 ed-onde-account = { version = "X.Y.Z", path = "crates/ed-onde-account" }
+ed-claude       = { version = "X.Y.Z", path = "crates/ed-claude" }
 ```
 
 Bump all of these together. The crate manifests under `crates/*/Cargo.toml`
@@ -145,6 +147,25 @@ here — this is the safety net for step 6.
 - Checks out `ondeinference/ed-swift`, rewrites `Package.swift` with the new
   release URL + checksum, copies the generated `ed_agent_ffi.swift`, commits,
   pushes to `ed-swift` `main`, and tags it `vX.Y.Z`.
+
+## Adding a new crate
+
+crates.io only allows a trusted publisher on a crate that already exists
+(RFC 3691), so a new crate's first version goes up by hand, before the tag that
+would publish it:
+
+1. Create a token with scope `publish-new` only, crate pattern set to the new
+   crate, expiry 1 day. Keep it in `CARGO_REGISTRY_TOKEN` for one command; never
+   write it to `~/.cargo/credentials.toml`.
+2. Publish the first version. If the crate needs an API that the last published
+   `ed-acp` lacks, it won't compile against the registry, so publish a
+   placeholder `0.0.1` (empty `lib.rs`, same license and metadata) from a
+   scratch directory. A caret requirement such as `"1.4"` never selects it.
+3. Revoke the token.
+4. On the crate's Settings → Trusted Publishing, add a GitHub publisher: owner
+   `ondeinference`, repository `ed`, workflow `release-sdk-rust.yml`, and the
+   same environment as `ed-acp`. Check the owners match `ed-acp`'s.
+5. Tag as usual. The real crate then publishes through OIDC.
 
 ## Manual / recovery runs
 
