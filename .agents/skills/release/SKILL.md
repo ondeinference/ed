@@ -138,6 +138,9 @@ here — this is the safety net for step 6.
 - Publishes crates in dependency order to crates.io.
 - `cargo workspaces plan --skip-published` makes re-runs safe: a run that dies
   mid-publish only publishes the crates still missing from the registry.
+- Workspace-member dev-deps must be path-only (`foo = { path = "../foo" }`), not
+  `foo.workspace = true`. cargo-workspaces strips dev-deps that carry a version,
+  which changes `Cargo.lock` and fails the `--locked` publish (ed-claude 1.4.0).
 
 ### `release-sdk-swift.yml` → XCFramework + `ed-swift`
 
