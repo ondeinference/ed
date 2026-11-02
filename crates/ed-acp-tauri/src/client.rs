@@ -26,9 +26,10 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionRequest, TextContent, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
+use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Channel, Client, ConnectionTo};
+use ed_acp::agent_client_protocol::schema::v1::McpServer;
 use ed_acp::llm::LlmClient;
-use ed_acp::{cli, LlmConfig, ServeOptions};
+use ed_acp::{cli, LlmConfig, Profile, ServeOptions};
 use log::{error, info, warn};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -36,8 +37,8 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
 
 use crate::{
-    AgentSessionOpened, AgentSessionSummary, AgentStatus, AgentTurnEndedPayload, HostConfig, Roots,
-    AUTH_REQUIRED,
+    AgentSessionOpened, AgentSessionSummary, AgentStatus, AgentTurnEndedPayload, ExternalConfig,
+    HostConfig, Roots, AUTH_REQUIRED,
 };
 
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<RequestPermissionOutcome>>>>;
@@ -46,10 +47,32 @@ type SessionRoots = Arc<Mutex<HashMap<String, Roots>>>;
 
 /// Managed Tauri state: the live connection and the permission requests waiting on the user.
 pub struct AgentState {
-    config: HostConfig,
+    config: Common,
+    source: Source,
     connection: tokio::sync::Mutex<Option<Live>>,
     permissions: Pending,
     roots: SessionRoots,
+}
+
+/// What an agent needs from the app, whichever way it runs.
+#[derive(Clone)]
+struct Common {
+    client_name: &'static str,
+    client_version: &'static str,
+    roots: fn(&AppHandle, Option<&Path>) -> Result<Roots, String>,
+    mcp_servers: fn(&AppHandle, Option<String>) -> Vec<McpServer>,
+    events: crate::Events,
+}
+
+/// Where the agent runs.
+enum Source {
+    /// `ed_acp::serve` on an in-memory channel.
+    InProcess {
+        profile: fn() -> Arc<dyn Profile>,
+        surface: &'static str,
+    },
+    /// A child process that speaks ACP on stdio.
+    External(ExternalConfig),
 }
 
 struct Live {
@@ -200,9 +223,41 @@ fn without_api_key(existing: &str, model_var: &str) -> (String, bool) {
 }
 
 impl AgentState {
-    pub fn new(config: HostConfig) -> Self {
+    /// An agent served in this process from the host's [`Profile`].
+    pub fn new(host: HostConfig) -> Self {
         Self {
-            config,
+            source: Source::InProcess {
+                profile: host.profile,
+                surface: host.surface,
+            },
+            config: Common {
+                client_name: host.client_name,
+                client_version: host.client_version,
+                roots: host.roots,
+                mcp_servers: host.mcp_servers,
+                events: host.events,
+            },
+            connection: tokio::sync::Mutex::new(None),
+            permissions: Pending::default(),
+            roots: SessionRoots::default(),
+        }
+    }
+
+    /// An agent that runs as a child process speaking ACP on stdio, such as Anthropic's
+    /// `claude` through `claude-agent-acp`. It is started on first use and killed when the
+    /// connection ends: on [`logout`](Self::logout), or when this state is dropped. The same
+    /// client serves it as the in-process agent: session updates, permission prompts, `fs/*`
+    /// inside the session's roots and URL elicitation.
+    pub fn external(external: ExternalConfig) -> Self {
+        Self {
+            config: Common {
+                client_name: external.client_name,
+                client_version: external.client_version,
+                roots: external.roots,
+                mcp_servers: external.mcp_servers,
+                events: external.events,
+            },
+            source: Source::External(external),
             connection: tokio::sync::Mutex::new(None),
             permissions: Pending::default(),
             roots: SessionRoots::default(),
@@ -211,10 +266,7 @@ impl AgentState {
 
     /// The live connection, starting the agent and the client on first use or after the
     /// previous connection ended.
-    async fn connection(
-        &self,
-        app: &AppHandle,
-    ) -> Result<(ConnectionTo<Agent>, Vec<String>), String> {
+    async fn connection(&self, app: &AppHandle) -> Ready {
         let mut slot = self.connection.lock().await;
         if let Some(live) = slot.as_ref() {
             if !live.ended.load(Ordering::SeqCst) {
@@ -228,22 +280,7 @@ impl AgentState {
     }
 
     async fn connect(&self, app: &AppHandle) -> Result<Live, String> {
-        let (agent_end, client_end) = Channel::duplex();
-
-        let opts = ServeOptions {
-            yolo: false,
-            surface: self.config.surface,
-        };
-        let profile = (self.config.profile)();
-        let agent_name = profile.info().display_name;
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = ed_acp::serve(profile, opts, agent_end).await {
-                error!("{agent_name} agent stopped: {e}");
-            }
-        });
-
-        let (ready_tx, ready_rx) =
-            oneshot::channel::<Result<(ConnectionTo<Agent>, Vec<String>), String>>();
+        let (ready_tx, ready_rx) = oneshot::channel::<Ready>();
         let (hang_up, hung_up) = oneshot::channel::<()>();
         let ended = Arc::new(AtomicBool::new(false));
 
@@ -345,45 +382,56 @@ impl AgentState {
         let pending = self.permissions.clone();
         let client_name = self.config.client_name;
         let client_version = self.config.client_version;
-        tauri::async_runtime::spawn(async move {
-            let result = client
-                .connect_with(client_end, |conn: ConnectionTo<Agent>| async move {
-                    let init = conn
-                        .send_request(
-                            InitializeRequest::new(ProtocolVersion::V1)
-                                .client_capabilities(
-                                    ClientCapabilities::new()
-                                        .fs(FileSystemCapabilities::new()
-                                            .read_text_file(true)
-                                            .write_text_file(true))
-                                        .elicitation(
-                                            ElicitationCapabilities::new()
-                                                .url(ElicitationUrlCapabilities::new()),
-                                        ),
-                                )
-                                .client_info(Implementation::new(client_name, client_version)),
-                        )
-                        .block_task()
-                        .await;
-                    match init {
-                        Ok(init) => {
-                            let methods = init
-                                .auth_methods
-                                .iter()
-                                .map(|m| m.id().to_string())
-                                .collect();
-                            let _ = ready_tx.send(Ok((conn, methods)));
-                            // Stay connected until the state is dropped or replaced.
-                            let _ = hung_up.await;
-                            Ok(())
-                        }
-                        Err(e) => {
-                            let _ = ready_tx.send(Err(format!("Agent failed to start: {e}")));
-                            Err(e)
-                        }
+        let what = match &self.source {
+            Source::InProcess { .. } => "in-process",
+            Source::External(_) => "external",
+        };
+        let transport = match &self.source {
+            Source::InProcess { profile, surface } => {
+                let (agent_end, client_end) = Channel::duplex();
+                let opts = ServeOptions {
+                    yolo: false,
+                    surface,
+                };
+                let profile = profile();
+                let agent_name = profile.info().display_name;
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = ed_acp::serve(profile, opts, agent_end).await {
+                        error!("{agent_name} agent stopped: {e}");
                     }
-                })
-                .await;
+                });
+                Transport::Channel(client_end)
+            }
+            Source::External(external) => {
+                let mut config = AcpAgentConfig::new(&external.command);
+                for arg in &external.args {
+                    config = config.arg(arg);
+                }
+                for (name, value) in &external.env {
+                    config = config.env(name, value);
+                }
+                Transport::Process(AcpAgent::new(config))
+            }
+        };
+        tauri::async_runtime::spawn(async move {
+            let result = match transport {
+                Transport::Channel(end) => {
+                    client
+                        .connect_with(end, |conn| {
+                            run_session(conn, client_name, client_version, ready_tx, hung_up)
+                        })
+                        .await
+                }
+                // Hanging up drops the process transport, which kills the child and its
+                // descendants.
+                Transport::Process(agent) => {
+                    client
+                        .connect_with(agent, |conn| {
+                            run_session(conn, client_name, client_version, ready_tx, hung_up)
+                        })
+                        .await
+                }
+            };
             if let Err(e) = result {
                 warn!("Agent connection ended: {e}");
             }
@@ -395,7 +443,7 @@ impl AgentState {
         let (conn, auth_methods) = ready_rx
             .await
             .map_err(|_| "Agent failed to start.".to_string())??;
-        info!("Agent connected in-process");
+        info!("Agent connected ({what})");
         Ok(Live {
             conn,
             auth_methods,
@@ -631,14 +679,75 @@ impl AgentState {
         Ok(())
     }
 
-    /// Sign out: the agent forgets its stored session.
+    /// Sign out. The in-process agent forgets its stored session. An external agent's child
+    /// process is ended instead, and its own credentials are left alone, so the next connection
+    /// starts it still signed in.
     pub async fn logout(&self, app: &AppHandle) -> Result<(), String> {
+        // An external agent keeps its session in its own CLI, which this app doesn't touch.
+        // Ending the process is all that signing out of it means here.
+        if matches!(self.source, Source::External(_)) {
+            self.connection.lock().await.take();
+            self.permissions.lock().unwrap().clear();
+            return Ok(());
+        }
         let (conn, _) = self.connection(app).await?;
         conn.send_request(LogoutRequest::new())
             .block_task()
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+}
+
+enum Transport {
+    Channel(Channel),
+    Process(AcpAgent),
+}
+
+/// What `run_session` hands over once the agent has initialized: the connection and the auth
+/// method ids, or why it could not start.
+type Ready = Result<(ConnectionTo<Agent>, Vec<String>), String>;
+
+/// Initialize the agent, hand the connection to whoever is waiting for it, and stay connected
+/// until the state is dropped or replaced.
+async fn run_session(
+    conn: ConnectionTo<Agent>,
+    client_name: &'static str,
+    client_version: &'static str,
+    ready_tx: oneshot::Sender<Ready>,
+    hung_up: oneshot::Receiver<()>,
+) -> agent_client_protocol::Result<()> {
+    let init = conn
+        .send_request(
+            InitializeRequest::new(ProtocolVersion::V1)
+                .client_capabilities(
+                    ClientCapabilities::new()
+                        .fs(FileSystemCapabilities::new()
+                            .read_text_file(true)
+                            .write_text_file(true))
+                        .elicitation(
+                            ElicitationCapabilities::new().url(ElicitationUrlCapabilities::new()),
+                        ),
+                )
+                .client_info(Implementation::new(client_name, client_version)),
+        )
+        .block_task()
+        .await;
+    match init {
+        Ok(init) => {
+            let methods = init
+                .auth_methods
+                .iter()
+                .map(|m| m.id().to_string())
+                .collect();
+            let _ = ready_tx.send(Ok((conn, methods)));
+            let _ = hung_up.await;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = ready_tx.send(Err(format!("Agent failed to start: {e}")));
+            Err(e)
+        }
     }
 }
 
