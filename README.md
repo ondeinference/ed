@@ -53,7 +53,7 @@ Streaming, history, tools and approvals are covered in [`crates/ed-agent`](crate
 - **In your app:** [`ed-agent`](crates/ed-agent), plus [`ed-agent-tauri`](crates/ed-agent-tauri) for Tauri and [`ed-agent-ffi`](crates/ed-agent-ffi) for Swift.
 - **As an ACP agent:** [`ed-acp`](crates/ed-acp) with a `Profile`, and [`ed-acp-tui`](crates/ed-acp-tui) for a terminal UI.
 - **Inside a Tauri app:** [`ed-acp-tauri`](crates/ed-acp-tauri) runs an ACP agent in process or an external stdio agent.
-- **With Claude:** [`ed-claude`](crates/ed-claude), a profile on the Anthropic API with the user's key.
+- **With Claude:** [`ed-claude`](crates/ed-claude/README.md), a profile on the Anthropic API with the user's key.
 - **With MCP servers:** [`ed-mcp`](crates/ed-mcp). Onde accounts: [`ed-onde-account`](crates/ed-onde-account). Tests: [`ed-acp-testkit`](crates/ed-acp-testkit).
 
 ## In production
@@ -71,7 +71,7 @@ Each crate has its own README:
 [`ed-acp`](crates/ed-acp/README.md),
 [`ed-acp-tui`](crates/ed-acp-tui/README.md),
 [`ed-acp-tauri`](crates/ed-acp-tauri),
-[`ed-claude`](crates/ed-claude),
+[`ed-claude`](crates/ed-claude/README.md),
 [`ed-mcp`](crates/ed-mcp/README.md),
 [`ed-onde-account`](crates/ed-onde-account/README.md),
 [`ed-acp-testkit`](crates/ed-acp-testkit/README.md).
