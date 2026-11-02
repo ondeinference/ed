@@ -1,0 +1,25 @@
+[package]
+name = "ed-claude"
+description = "Claude as an ed-acp agent: a coding-agent profile that talks to the Anthropic API with the user's own key, for hosts that run agents in process."
+keywords = ["claude", "anthropic", "agent", "acp"]
+categories = ["development-tools"]
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ed-acp.workspace = true
+agent-client-protocol.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ed-acp-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
