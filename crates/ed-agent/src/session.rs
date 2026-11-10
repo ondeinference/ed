@@ -34,8 +34,11 @@ pub struct SessionError(pub String);
 ///   messages if it does.
 /// - `delete` of an unknown id succeeds.
 /// - `list` is ordered most recently updated first.
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    async_trait::async_trait
+)]
 pub trait SessionStore: MaybeSend + MaybeSync + 'static {
     async fn list(&self) -> Result<Vec<SessionMeta>, SessionError>;
     async fn load(&self, id: &str) -> Result<Option<Vec<ChatMessage>>, SessionError>;
@@ -71,8 +74,11 @@ mod tests {
         }
     }
 
-    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+    #[cfg_attr(
+        not(all(target_arch = "wasm32", target_os = "unknown")),
+        async_trait::async_trait
+    )]
     impl SessionStore for MemoryStore {
         async fn list(&self) -> Result<Vec<SessionMeta>, SessionError> {
             let mut metas: Vec<_> = self

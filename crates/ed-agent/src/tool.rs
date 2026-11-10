@@ -105,14 +105,20 @@ pub enum ApprovalDecision {
     Deny,
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    async_trait::async_trait
+)]
 pub trait ToolExecutor: MaybeSend + MaybeSync + 'static {
     async fn execute(&self, tool_name: &str, arguments: &str) -> Result<String, String>;
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    async_trait::async_trait
+)]
 pub trait ApprovalHandler: MaybeSend + MaybeSync + 'static {
     async fn approve(&self, request: ApprovalRequest) -> ApprovalDecision;
 }
@@ -120,8 +126,11 @@ pub trait ApprovalHandler: MaybeSend + MaybeSync + 'static {
 #[derive(Debug, Default)]
 pub struct RejectingExecutor;
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    async_trait::async_trait
+)]
 impl ToolExecutor for RejectingExecutor {
     async fn execute(&self, tool_name: &str, _: &str) -> Result<String, String> {
         Err(format!("no executor is registered for tool {tool_name:?}"))
@@ -131,8 +140,11 @@ impl ToolExecutor for RejectingExecutor {
 #[derive(Debug, Default)]
 pub struct DenyApprovals;
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    async_trait::async_trait
+)]
 impl ApprovalHandler for DenyApprovals {
     async fn approve(&self, _: ApprovalRequest) -> ApprovalDecision {
         ApprovalDecision::Deny
