@@ -1,9 +1,25 @@
 name: CI
 
+# One run per commit: push only fires on the integration branches, and
+# pull_request has no branch filter so stacked PRs still run. Every pull
+# request starts the workflow, so `CI status` always reports and can be a
+# required check. The `changes` job routes the work: docs, skills and agent
+# config start nothing but that job and the status check. Pushes to the
+# integration branches skip those files outright.
 on:
   pull_request:
   push:
     branches: [main, development]
+    paths-ignore:
+      - "**/*.md"
+      - ".agents/**"
+      - ".claude/**"
+      - ".sigit/**"
+      - "LICENSE-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   # Keyed on the commit, not the ref: a merge lands the same SHA on development
@@ -16,7 +32,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # paths-filter has no base to diff on workflow_dispatch, so a manual run
+  # forces every concern on instead of skipping everything.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
+      workflows: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.workflows == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            rust:
+              - "crates/**"
+              - "uniffi-bindgen/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "rust-toolchain.toml"
+              - ".cargo/**"
+              - "scripts/**"
+              - ".github/workflows/ci.yml"
+            workflows:
+              - ".github/workflows/**"
+              - ".github/scripts/**"
+
+  actionlint:
+    name: Lint workflows
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash) 1.7.12
+      - run: ./actionlint -color
+
   check:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: macos-26
     defaults:
       run:
@@ -42,3 +97,15 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+
+  ci:
+    name: CI status
+    needs: [changes, actionlint, check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every needed job succeeded or was skipped
+        run: |
+          for result in ${{ join(needs.*.result, ' ') }}; do
+            case "$result" in success|skipped) ;; *) echo "::error::job result: $result"; exit 1;; esac
+          done
