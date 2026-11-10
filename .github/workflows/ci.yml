@@ -32,12 +32,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # paths-filter has no base to diff on workflow_dispatch, so a manual run
+  # forces every concern on instead of skipping everything.
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      workflows: ${{ steps.filter.outputs.workflows }}
+      rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
+      workflows: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.workflows == 'true' }}
     steps:
       - uses: actions/checkout@v6
       - id: filter
