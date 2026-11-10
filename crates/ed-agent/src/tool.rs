@@ -1,6 +1,6 @@
 //! Host-defined tools and the policies that guard them.
 
-use async_trait::async_trait;
+use crate::maybe::{MaybeSend, MaybeSync};
 use serde::{Deserialize, Serialize};
 
 /// A tool the model may ask the host application to run.
@@ -105,20 +105,23 @@ pub enum ApprovalDecision {
     Deny,
 }
 
-#[async_trait]
-pub trait ToolExecutor: Send + Sync + 'static {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ToolExecutor: MaybeSend + MaybeSync + 'static {
     async fn execute(&self, tool_name: &str, arguments: &str) -> Result<String, String>;
 }
 
-#[async_trait]
-pub trait ApprovalHandler: Send + Sync + 'static {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ApprovalHandler: MaybeSend + MaybeSync + 'static {
     async fn approve(&self, request: ApprovalRequest) -> ApprovalDecision;
 }
 
 #[derive(Debug, Default)]
 pub struct RejectingExecutor;
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl ToolExecutor for RejectingExecutor {
     async fn execute(&self, tool_name: &str, _: &str) -> Result<String, String> {
         Err(format!("no executor is registered for tool {tool_name:?}"))
@@ -128,7 +131,8 @@ impl ToolExecutor for RejectingExecutor {
 #[derive(Debug, Default)]
 pub struct DenyApprovals;
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl ApprovalHandler for DenyApprovals {
     async fn approve(&self, _: ApprovalRequest) -> ApprovalDecision {
         ApprovalDecision::Deny

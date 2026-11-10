@@ -5,7 +5,7 @@
 //! and hands the messages to [`Ed::restore_history`](crate::Ed::restore_history)
 //! when the user switches conversation.
 
-use async_trait::async_trait;
+use crate::maybe::{MaybeSend, MaybeSync};
 use onde::inference::types::ChatMessage;
 use serde::{Deserialize, Serialize};
 
@@ -34,8 +34,9 @@ pub struct SessionError(pub String);
 ///   messages if it does.
 /// - `delete` of an unknown id succeeds.
 /// - `list` is ordered most recently updated first.
-#[async_trait]
-pub trait SessionStore: Send + Sync + 'static {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait SessionStore: MaybeSend + MaybeSync + 'static {
     async fn list(&self) -> Result<Vec<SessionMeta>, SessionError>;
     async fn load(&self, id: &str) -> Result<Option<Vec<ChatMessage>>, SessionError>;
     async fn save(&self, id: &str, messages: &[ChatMessage]) -> Result<(), SessionError>;
@@ -70,7 +71,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
     impl SessionStore for MemoryStore {
         async fn list(&self) -> Result<Vec<SessionMeta>, SessionError> {
             let mut metas: Vec<_> = self

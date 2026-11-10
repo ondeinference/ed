@@ -2,6 +2,7 @@
 
 use onde::inference::EngineStatus;
 
+use crate::maybe::{MaybeSend, MaybeSync};
 use crate::{AgentReply, ApprovalRequest, ChatReply, ToolCall, ToolExecutionResult};
 
 /// Receives lifecycle transitions and completed replies.
@@ -15,9 +16,9 @@ use crate::{AgentReply, ApprovalRequest, ChatReply, ToolCall, ToolExecutionResul
 ///
 /// Both methods are synchronous and should stay cheap — they are called while
 /// Ed is mid-operation. Hand off to a channel or an event bus rather than
-/// blocking. Implementations must be `Send + Sync` because a load or a send
+/// blocking. Implementations must be `Send + Sync` (on `wasm32`, where the agent is single-threaded, that relaxes to nothing; see [`maybe`](crate::maybe)) because a load or a send
 /// may be driven from any task.
-pub trait EventSink: Send + Sync + 'static {
+pub trait EventSink: MaybeSend + MaybeSync + 'static {
     /// The engine moved to a new lifecycle state.
     ///
     /// `model_name` is the model involved where one is known, and `error`
