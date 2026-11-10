@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use log::{error, info};
 use onde::inference::types::{format_duration, ChatMessage};
@@ -12,6 +12,7 @@ use onde::inference::{
     ChatEngine, EngineInfo, EngineStatus, GgufModelConfig, InferenceError, SamplingConfig,
     ToolCallingSupport, ToolDefinition, ToolResult,
 };
+use web_time::Instant;
 
 use crate::{
     stream::chunk_error, tool::truncate_output, AgentConfig, AgentError, AgentReply,

@@ -24,8 +24,10 @@
 //! implementations internally, so this crate compiles on every platform `onde`
 //! supports (macOS, iOS, tvOS, visionOS, watchOS, Windows, Linux, Android) and
 //! simply surfaces `onde`'s error where it can't run inference. Outside that
-//! list `onde` falls back to a stub whose signatures differ, so Ed does not
-//! build there either.
+//! list (wasm32, for one) `onde` falls back to a stub engine with the same
+//! signatures, whose calls all return an "unsupported" error. Releases of
+//! `onde` up to 1.3.5 have a stub that drifted from the real engine, so Ed
+//! only builds on those targets against a newer release.
 //!
 //! Do not add platform gates here, and be careful about adding them in a host:
 //! a gate narrower than `onde`'s own support list silently disables chat on a
@@ -49,6 +51,7 @@
 #![forbid(unsafe_code)]
 
 mod ed;
+pub mod maybe;
 mod reply;
 mod session;
 mod sink;
