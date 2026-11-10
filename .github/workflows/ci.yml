@@ -1,20 +1,21 @@
 name: CI
 
 # One run per commit: push only fires on the integration branches, and
-# pull_request has no branch filter so stacked PRs still run. Docs, skills and
-# agent config never affect the build, so they start nothing. The `changes` job
-# routes the rest.
+# pull_request has no branch filter so stacked PRs still run. Every pull
+# request starts the workflow, so `CI status` always reports and can be a
+# required check. The `changes` job routes the work: docs, skills and agent
+# config start nothing but that job and the status check. Pushes to the
+# integration branches skip those files outright.
 on:
   pull_request:
-    paths-ignore: &ignored
+  push:
+    branches: [main, development]
+    paths-ignore:
       - "**/*.md"
       - ".agents/**"
       - ".claude/**"
       - ".sigit/**"
       - "LICENSE-*"
-  push:
-    branches: [main, development]
-    paths-ignore: *ignored
   workflow_dispatch:
 
 permissions:
@@ -63,11 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+      - run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash) 1.7.12
       - run: ./actionlint -color
 
   check:
-    name: Check
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: macos-26
