@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ondeinference/onde/refs/heads/main/assets/onde-inference-logo.svg" alt="Onde Inference" width="96">
+  <img src="./assets/app-icon.jpg" alt="Ed Agent SDK" width="96">
 </p>
 
 <h1 align="center">Ed</h1>
