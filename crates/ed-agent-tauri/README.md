@@ -46,5 +46,5 @@ Without `EdSessions`, tool calling needs both halves from you: build the agent w
 
 ## Copyright
 
-© 2026 [Onde Inference](https://ondeinference.com).
+© 2026 Seto Elkahfi ([Onde Inference](https://ondeinference.com)).
 Licensed under MIT or Apache-2.0.
