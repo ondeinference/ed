@@ -163,7 +163,10 @@ function onError(m) {
   if (current) {
     current.bubble.classList.remove("pending");
     current.bubble.classList.add("error");
-    current.bubble.textContent ||= `Error: ${m.message}`;
+    const note = `Error: ${m.message}`;
+    current.bubble.textContent = current.bubble.textContent
+      ? `${current.bubble.textContent}\n\n[${note}]`
+      : note;
     current = null;
     setBusy(false);
   } else if (m.stage === "boot") {

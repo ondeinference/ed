@@ -8,6 +8,6 @@ cd "$(dirname "$0")"
 
 # simd128 is what makes CPU inference usable in a browser. Every current
 # browser supports it, and main.js checks for it before loading anything.
-export RUSTFLAGS="${RUSTFLAGS:--C target-feature=+simd128}"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C target-feature=+simd128"
 
 wasm-pack build --target web --release --out-dir www/pkg --no-typescript -- "$@"

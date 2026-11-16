@@ -63,7 +63,8 @@ const handlers = {
 
 self.onmessage = async ({ data }) => {
   const handler = handlers[data.type];
-  if (!handler || !chat) return;
+  if (!handler) return;
+  if (!chat) return fail(data.type, "Ed is still starting", data.id);
   try {
     await handler(data);
   } catch (error) {
