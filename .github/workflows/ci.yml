@@ -48,6 +48,7 @@ jobs:
           filters: |
             rust:
               - "crates/**"
+              - "examples/**"
               - "uniffi-bindgen/**"
               - "Cargo.toml"
               - "Cargo.lock"

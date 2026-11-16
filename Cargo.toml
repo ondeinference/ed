@@ -13,6 +13,8 @@ members = [
     "crates/ed-claude",
     "uniffi-bindgen",
 ]
+# Built only for wasm32 with its own lockfile: see examples/web-chat/README.md.
+exclude = ["examples/web-chat"]
 
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
