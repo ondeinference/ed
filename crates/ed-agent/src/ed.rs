@@ -654,7 +654,11 @@ mod tests {
 
     struct CountingExecutor(AtomicUsize);
 
-    #[async_trait::async_trait]
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+    #[cfg_attr(
+        not(all(target_arch = "wasm32", target_os = "unknown")),
+        async_trait::async_trait
+    )]
     impl ToolExecutor for CountingExecutor {
         async fn execute(&self, tool_name: &str, _: &str) -> Result<String, String> {
             self.0.fetch_add(1, Ordering::Relaxed);
@@ -664,7 +668,11 @@ mod tests {
 
     struct FixedApproval(ApprovalDecision);
 
-    #[async_trait::async_trait]
+    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), async_trait::async_trait(?Send))]
+    #[cfg_attr(
+        not(all(target_arch = "wasm32", target_os = "unknown")),
+        async_trait::async_trait
+    )]
     impl ApprovalHandler for FixedApproval {
         async fn approve(&self, _: ApprovalRequest) -> ApprovalDecision {
             self.0

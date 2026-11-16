@@ -124,8 +124,8 @@ jobs:
         with:
           workspaces: ed
           key: wasm32
-      - run: cargo check --locked --target wasm32-unknown-unknown -p ed-agent
-      - run: cargo clippy --locked --target wasm32-unknown-unknown -p ed-agent -- -D warnings
+      - run: cargo check --locked --target wasm32-unknown-unknown -p ed-agent --all-targets
+      - run: cargo clippy --locked --target wasm32-unknown-unknown -p ed-agent --all-targets -- -D warnings
 
   ci:
     name: CI status
