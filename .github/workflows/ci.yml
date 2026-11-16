@@ -98,9 +98,38 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
 
+  check-wasm32:
+    name: Check wasm32
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ed
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: ed
+      - name: Read Rust toolchain
+        run: |
+          rust_toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)"
+          test -n "$rust_toolchain"
+          echo "RUST_TOOLCHAIN=$rust_toolchain" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ed
+          key: wasm32
+      - run: cargo check --locked --target wasm32-unknown-unknown -p ed-agent
+      - run: cargo clippy --locked --target wasm32-unknown-unknown -p ed-agent -- -D warnings
+
   ci:
     name: CI status
-    needs: [changes, actionlint, check]
+    needs: [changes, actionlint, check, check-wasm32]
     if: always()
     runs-on: ubuntu-latest
     steps:
