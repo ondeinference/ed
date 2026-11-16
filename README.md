@@ -58,9 +58,16 @@ Streaming, history, tools and approvals are covered in [`crates/ed-agent`](crate
 
 ## In production
 
-[smbCloud MailX](https://smbcloudmail.com/en-us), [Siti AI](https://github.com/getsigit/siti) (the open reference app),
-[Pepak Basa Jawa Komplit](https://apps.apple.com/se/app/pepak-basa-jawa-komplit/id6752241812) and
-[Rumi](https://apps.apple.com/se/app/rumi-l%C3%A4r-dig-persiska/id6753832408).
+Ed ships in apps by Seto Elkahfi, distributed by Splitfire AB.
+
+<p align="center">
+  <a href="https://apps.apple.com/se/developer/splitfire-ab/id1831430993"><img src="./assets/badges/app-store.svg" alt="Download on the App Store" height="40"></a>
+  <a href="https://play.google.com/store/apps/dev?id=9116586035310009096"><img src="./assets/badges/google-play.png" alt="Get it on Google Play" height="40"></a>
+  <a href="https://apps.microsoft.com/search/publisher?name=Splitfire%20AB%20Developer&hl=en-US&gl=SE"><img src="./assets/badges/microsoft-store.svg" alt="Get it from Microsoft" height="40"></a>
+  <a href="https://snapcraft.io/publisher/setoelkahfi"><img src="./assets/badges/snap-store.svg" alt="Get it from the Snap Store" height="40"></a>
+  <a href="https://appgallery.huawei.com/app/C119541969"><img src="./assets/badges/appgallery.svg" alt="Explore it on AppGallery" height="40"></a>
+  <a href="https://www.amazon.com/gp/search?index=mobile-apps&field-brandtextbin=Seto+Elkahfi&search-type=ss"><img src="./assets/badges/amazon-appstore.png" alt="Available at Amazon Appstore" height="40"></a>
+</p>
 
 ## Docs
 
@@ -92,4 +99,4 @@ MIT or Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-A
 
 Free the intelligence.
 
-© 2026 [Onde Inference](https://ondeinference.com).
+© 2026 Seto Elkahfi ([Onde Inference](https://ondeinference.com)).

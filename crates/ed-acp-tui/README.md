@@ -9,5 +9,5 @@ permission requests with `y` (allow), `a` (always), `n` (reject) or `r` (always 
 
 ## Copyright
 
-© 2026 [Onde Inference](https://ondeinference.com).
+© 2026 Seto Elkahfi ([Onde Inference](https://ondeinference.com)).
 Licensed under MIT or Apache-2.0.
