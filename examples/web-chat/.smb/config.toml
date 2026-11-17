@@ -1,0 +1,15 @@
+name = "ondewebdemo"
+description = "Ed running in the browser, published at ondewebdemo.5mb.app."
+
+[project]
+id = 50
+# The App the artifact deploy publishes to. The server allocates the target dir.
+frontend_app_id = "c0277812-c891-4f4b-a3ee-c8cb371bb629"
+name = "ondewebdemo"
+# static: nginx serves the directory off disk. No build, no process, no port.
+runner = 1
+# `smb deploy --prebuilt` publishes an artifact over HTTPS (see deploy.sh).
+deployment_method = 1
+repository = "ondewebdemo"
+description = "Ed running in the browser."
+source = "."

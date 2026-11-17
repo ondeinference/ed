@@ -119,6 +119,8 @@ textarea {
 
 footer { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.8125rem; }
 .spacer { flex: 1; }
+.byline { margin: 0; text-align: center; color: var(--muted); font-size: 0.8125rem; }
+.byline a { color: inherit; text-underline-offset: 3px; }
 #stats { font-variant-numeric: tabular-nums; }
 
 .visually-hidden {
