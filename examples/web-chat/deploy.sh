@@ -32,7 +32,7 @@ git diff --quiet HEAD -- . || version="$version-dirty"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 mkdir "$stage/pkg"
-cp www/index.html www/main.js www/worker.js www/style.css "$stage/"
+cp www/index.html www/main.js www/worker.js www/style.css www/favicon.svg www/apple-touch-icon.png "$stage/"
 cp www/pkg/web_chat.js www/pkg/web_chat_bg.wasm "$stage/pkg/"
 printf '%s\n' "$version" > "$stage/version.txt"
 # Config only: the CLI reads it and leaves it out of the upload.
