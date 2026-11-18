@@ -31,8 +31,9 @@ git diff --quiet HEAD -- . || version="$version-dirty"
 # .gitignore from wasm-pack that have no place on the site.
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
-mkdir "$stage/pkg"
+mkdir "$stage/pkg" "$stage/badges"
 cp www/index.html www/main.js www/worker.js www/style.css www/favicon.svg www/apple-touch-icon.png "$stage/"
+cp www/badges/app-store.svg www/badges/google-play.png "$stage/badges/"
 cp www/pkg/web_chat.js www/pkg/web_chat_bg.wasm "$stage/pkg/"
 printf '%s\n' "$version" > "$stage/version.txt"
 # Config only: the CLI reads it and leaves it out of the upload.

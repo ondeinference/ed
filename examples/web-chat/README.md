@@ -35,8 +35,9 @@ CLI 1.1.0 or newer and a prior `smb login`.
 ./deploy.sh             # publishes, then waits for /version.txt to match
 ```
 
-`deploy.sh` ships only `index.html`, `main.js`, `worker.js`, `style.css` and the
-two files in `pkg/` that the page loads. Each deploy is a new release, and
+`deploy.sh` ships only `index.html`, `main.js`, `worker.js`, `style.css`, the
+icons, the two store badges in `badges/`, and the two files in `pkg/` that the
+page loads. Each deploy is a new release, and
 `/version.txt` holds the commit it was built from (`-dirty` if the tree had
 uncommitted changes). The site is static and needs no special headers.
 
@@ -45,6 +46,16 @@ uncommitted changes). The site is static and needs no special headers.
 Qwen 2.5 0.5B (GGUF, about 380 MB), once, on the first click of Download. It
 is stored in the browser's Cache Storage for this origin, so a reload loads it
 from disk without downloading again. **Remove model** in the footer deletes it.
+
+## Phones and tablets
+
+Loading the model peaks at about three times the file in memory (the cached
+bytes, the copy handed to the engine, and the tensors built from it), so a bit
+over 1 GB. Mobile browsers kill the tab before that. On phones and tablets the
+page shows a warning instead of starting, with a link to Siti AI in the App
+Store or Google Play (Onde in a native app) and a **Try anyway** button. The
+same warning appears on any device whose previous visit was killed while the
+model was loading. Lowering the peak is work for onde's `web_store`.
 
 ## Speed
 
