@@ -13,6 +13,8 @@ members = [
     "crates/ed-claude",
     "uniffi-bindgen",
 ]
+# Built only for wasm32 with its own lockfile: see examples/web-chat/README.md.
+exclude = ["examples/web-chat"]
 
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
@@ -27,9 +29,11 @@ homepage = "https://ondeinference.com"
 
 [workspace.dependencies]
 # The inference engine Ed wraps, resolved from crates.io like any dependency
-# (there is no path override to a sibling checkout). 1.3.2 is the first release
-# with ChatEngine::complete, which ed-acp's local provider calls.
-onde = { version = "1.3.2" }
+# (there is no path override to a sibling checkout). 1.4.0 is the first release
+# whose wasm32 stub engine matches the real engine's signatures, so ed-agent
+# compiles for wasm32-unknown-unknown. ChatEngine::complete, which ed-acp's
+# local provider calls, arrived in 1.3.2.
+onde = { version = "1.4.0" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

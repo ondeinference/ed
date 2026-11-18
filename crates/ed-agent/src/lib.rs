@@ -23,9 +23,10 @@
 //! Ed has no `cfg(target_os)` gates. `onde` already splits real and fallback
 //! implementations internally, so this crate compiles on every platform `onde`
 //! supports (macOS, iOS, tvOS, visionOS, watchOS, Windows, Linux, Android) and
-//! simply surfaces `onde`'s error where it can't run inference. Outside that
-//! list `onde` falls back to a stub whose signatures differ, so Ed does not
-//! build there either.
+//! simply surfaces `onde`'s error where it can't run inference. On
+//! `wasm32-unknown-unknown` it builds against `onde`'s web target. Other
+//! targets outside that list get a stub engine with the same signatures,
+//! whose calls all return an "unsupported" error.
 //!
 //! Do not add platform gates here, and be careful about adding them in a host:
 //! a gate narrower than `onde`'s own support list silently disables chat on a
@@ -49,6 +50,7 @@
 #![forbid(unsafe_code)]
 
 mod ed;
+pub mod maybe;
 mod reply;
 mod session;
 mod sink;

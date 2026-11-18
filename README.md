@@ -81,7 +81,8 @@ Each crate has its own README:
 [`ed-claude`](crates/ed-claude/README.md),
 [`ed-mcp`](crates/ed-mcp/README.md),
 [`ed-onde-account`](crates/ed-onde-account/README.md),
-[`ed-acp-testkit`](crates/ed-acp-testkit/README.md).
+[`ed-acp-testkit`](crates/ed-acp-testkit/README.md),
+[`examples/web-chat`](examples/web-chat/README.md) (Ed in the browser).
 
 ## Contributing
 

@@ -20,6 +20,8 @@ log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 futures-core = "0.3"
+# std::time::Instant::now() panics on wasm32-unknown-unknown; web-time re-exports std on native.
+web-time = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync"] }

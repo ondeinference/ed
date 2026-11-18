@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Ed, in your browser</title>
+    <meta
+      name="description"
+      content="Ed is a language model that runs entirely in your browser. It downloads once, stays on your device, and nothing you type leaves it."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Onde" />
+    <meta property="og:title" content="Ed, in your browser" />
+    <meta
+      property="og:description"
+      content="A language model that runs entirely on your device. Nothing you type leaves it."
+    />
+    <meta property="og:url" content="https://ondewebdemo.5mb.app/" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Ed</h1>
+        <p class="tagline">A language model running on this device. Nothing you type leaves it.</p>
+      </header>
+
+      <section id="unsupported" class="card" hidden>
+        <h2>This browser can't run Ed</h2>
+        <p id="unsupported-reason"></p>
+      </section>
+
+      <section id="setup" class="card" hidden>
+        <h2 id="setup-title">Download the model</h2>
+        <p id="setup-text"></p>
+        <button id="download" type="button" disabled>Download</button>
+        <div id="progress-wrap" hidden>
+          <progress id="progress" max="100" value="0" aria-labelledby="progress-label"></progress>
+          <p id="progress-label" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="chat" hidden>
+        <div
+          id="transcript"
+          role="log"
+          aria-live="polite"
+          aria-label="Conversation"
+          tabindex="0"
+        ></div>
+        <form id="composer" autocomplete="off">
+          <label for="input" class="visually-hidden">Message</label>
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="Message Ed"
+
+          ></textarea>
+          <button id="send" type="submit">Send</button>
+          <button id="stop" type="button" hidden>Stop</button>
+        </form>
+        <footer>
+          <span id="stats" role="status" aria-live="off"></span>
+          <span class="spacer"></span>
+          <button id="reset" type="button" class="link">New conversation</button>
+          <button id="clear" type="button" class="link">Remove model</button>
+        </footer>
+      </section>
+
+      <p class="byline">Ed runs on <a href="https://ondeinference.com">Onde</a>.</p>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

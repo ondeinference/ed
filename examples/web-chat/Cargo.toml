@@ -1,0 +1,35 @@
+[package]
+name = "web-chat"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+description = "Ed running a model entirely in the browser, in a Web Worker."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ed-agent = { path = "../../crates/ed-agent" }
+# Used only for web_store::download_model; ed-agent does not re-export it. The
+# browser engine and web_store are in ondeinference/onde#50 and not released
+# yet, so this does not build from crates.io until a release has them. Raise
+# the requirement to that release when it is out.
+onde = "1.4.0"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[package.metadata.wasm-pack.profile.release]
+# wasm-opt is downloaded at build time and needs SIMD flags to match the
+# +simd128 build; skip it so the build has no network step beyond cargo.
+wasm-opt = false
