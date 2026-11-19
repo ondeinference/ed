@@ -19,7 +19,7 @@ exclude = ["examples/web-chat"]
 # Shared across every crate in the workspace so a release moves one number.
 # `sync-version` tooling (see the Makefile) reads these.
 [workspace.package]
-version = "1.4.1"
+version = "1.5.0"
 edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
@@ -29,11 +29,11 @@ homepage = "https://ondeinference.com"
 
 [workspace.dependencies]
 # The inference engine Ed wraps, resolved from crates.io like any dependency
-# (there is no path override to a sibling checkout). 1.4.0 is the first release
-# whose wasm32 stub engine matches the real engine's signatures, so ed-agent
-# compiles for wasm32-unknown-unknown. ChatEngine::complete, which ed-acp's
+# (there is no path override to a sibling checkout). 1.5.0 is the first release
+# with a real engine on wasm32-unknown-unknown, so ed-agent runs a model in the
+# browser as well as compiling there. ChatEngine::complete, which ed-acp's
 # local provider calls, arrived in 1.3.2.
-onde = { version = "1.4.0" }
+onde = { version = "1.5.0" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -64,14 +64,14 @@ directories = "6"
 base64 = "0.23"
 
 # Internal
-ed-agent = { version = "1.4.1", path = "crates/ed-agent" }
-ed-mcp = { version = "1.4.1", path = "crates/ed-mcp" }
-ed-acp = { version = "1.4.1", path = "crates/ed-acp" }
-ed-acp-tauri = { version = "1.4.1", path = "crates/ed-acp-tauri" }
-ed-acp-tui = { version = "1.4.1", path = "crates/ed-acp-tui" }
-ed-acp-testkit = { version = "1.4.1", path = "crates/ed-acp-testkit" }
-ed-onde-account = { version = "1.4.1", path = "crates/ed-onde-account" }
-ed-claude = { version = "1.4.1", path = "crates/ed-claude" }
+ed-agent = { version = "1.5.0", path = "crates/ed-agent" }
+ed-mcp = { version = "1.5.0", path = "crates/ed-mcp" }
+ed-acp = { version = "1.5.0", path = "crates/ed-acp" }
+ed-acp-tauri = { version = "1.5.0", path = "crates/ed-acp-tauri" }
+ed-acp-tui = { version = "1.5.0", path = "crates/ed-acp-tui" }
+ed-acp-testkit = { version = "1.5.0", path = "crates/ed-acp-testkit" }
+ed-onde-account = { version = "1.5.0", path = "crates/ed-onde-account" }
+ed-claude = { version = "1.5.0", path = "crates/ed-claude" }
 
 # gemm-common (via candle, via onde) depends on sysctl for every
 # `target_vendor = "apple"`, but sysctl 0.6.0 only has a `sys` module behind
