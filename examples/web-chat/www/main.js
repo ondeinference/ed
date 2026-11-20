@@ -5,6 +5,13 @@ const $ = (id) => document.getElementById(id);
 const els = {
   unsupported: $("unsupported"),
   reason: $("unsupported-reason"),
+  mobile: $("mobile"),
+  mobileTitle: $("mobile-title"),
+  mobileReason: $("mobile-reason"),
+  copyLink: $("copy-link"),
+  tryAnyway: $("try-anyway"),
+  badgeAppStore: $("badge-app-store"),
+  badgeGooglePlay: $("badge-google-play"),
   setup: $("setup"),
   setupTitle: $("setup-title"),
   setupText: $("setup-text"),
@@ -41,8 +48,52 @@ let resumeAfterReady = false; // set by Stop: reload the model without the setup
 
 const mb = (bytes) => `${(bytes / 1e6).toFixed(0)} MB`;
 
+// Set while the model loads into memory (not while it downloads, which streams
+// to disk), cleared once it is ready or fails. Still set on a visit soon after
+// means the tab was killed mid-load, almost always for running out of memory.
+// localStorage can throw (private modes, disabled storage), and this is only a
+// hint, so failures are ignored.
+const LOADING_KEY = "web-chat:loading";
+const CRASH_WINDOW_MS = 10 * 60 * 1000;
+const storage = {
+  get: () => { try { return localStorage.getItem(LOADING_KEY); } catch { return null; } },
+  set: () => { try { localStorage.setItem(LOADING_KEY, String(Date.now())); } catch {} },
+  clear: () => { try { localStorage.removeItem(LOADING_KEY); } catch {} },
+};
+
+function postLoad(message) {
+  storage.set();
+  post(message);
+}
+
+const ua = navigator.userAgent;
+// iPadOS Safari reports a Mac user agent; touch support gives it away.
+const isApple = /iPhone|iPod|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+const isAndroid = /Android/.test(ua);
+
+// Phones and tablets kill the tab before the model is loaded: loading peaks
+// at about three times the 380 MB file. deviceMemory is Chromium only.
+function constrainedDevice() {
+  if (navigator.userAgentData?.mobile) return true;
+  if (isApple || isAndroid || /Mobile/.test(ua)) return true;
+  return typeof navigator.deviceMemory === "number" && navigator.deviceMemory < 4;
+}
+
+function showMobileWarning(crashed) {
+  els.mobileTitle.textContent = crashed
+    ? "The model didn't fit last time"
+    : "Ed needs a desktop browser for now";
+  els.mobileReason.textContent = crashed
+    ? "The last attempt to load the model closed this tab, most likely because it ran out of memory. Loading takes over 1 GB, more than many browsers give a tab."
+    : "Loading the model takes over 1 GB of memory, more than phone and tablet browsers give a tab.";
+  // Offer the store for this device; elsewhere, both.
+  els.badgeAppStore.hidden = isAndroid;
+  els.badgeGooglePlay.hidden = isApple;
+  show("mobile");
+}
+
 function show(section) {
-  for (const name of ["unsupported", "setup", "chat"]) {
+  for (const name of ["unsupported", "mobile", "setup", "chat"]) {
     els[name].hidden = name !== section;
   }
 }
@@ -101,7 +152,7 @@ function onMessage(m) {
       modelLabel = m.model;
       if (resumeAfterReady) {
         resumeAfterReady = false;
-        post({ type: "load", system: SYSTEM_PROMPT });
+        postLoad({ type: "load", system: SYSTEM_PROMPT });
       } else {
         showSetup(m.cached);
       }
@@ -120,9 +171,10 @@ function onMessage(m) {
     }
     case "downloaded":
       els.progressLabel.textContent = "Download complete. Loading the model…";
-      post({ type: "load", system: SYSTEM_PROMPT });
+      postLoad({ type: "load", system: SYSTEM_PROMPT });
       break;
     case "loaded":
+      storage.clear();
       show("chat");
       setBusy(false);
       els.stats.textContent = `Model loaded in ${m.seconds.toFixed(1)} s`;
@@ -160,6 +212,7 @@ function onMessage(m) {
 }
 
 function onError(m) {
+  storage.clear();
   if (current) {
     current.bubble.classList.remove("pending");
     current.bubble.classList.add("error");
@@ -193,7 +246,7 @@ els.download.addEventListener("click", () => {
   if (els.download.dataset.cached === "true") {
     els.setupTitle.textContent = "Load the model";
     els.setupText.textContent = "Loading the model…";
-    post({ type: "load", system: SYSTEM_PROMPT });
+    postLoad({ type: "load", system: SYSTEM_PROMPT });
   } else {
     els.setupTitle.textContent = "Download the model";
     els.setupText.textContent = `${modelLabel}. Keep this tab open until it finishes.`;
@@ -255,6 +308,22 @@ els.stop.addEventListener("click", () => {
 });
 
 els.reset.addEventListener("click", () => post({ type: "reset" }));
+
+els.copyLink.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(location.href);
+    els.copyLink.textContent = "Copied";
+  } catch {
+    els.copyLink.textContent = location.href;
+  }
+});
+
+// The worker is started only now, so a phone that stays on the warning never
+// fetches the 5.6 MB wasm.
+els.tryAnyway.addEventListener("click", () => {
+  show("setup");
+  startWorker();
+});
 els.clear.addEventListener("click", () => {
   if (confirm("Remove the downloaded model from this browser?")) {
     post({ type: "clear" });
@@ -266,5 +335,12 @@ if (!WebAssembly.validate(SIMD_PROBE)) {
 } else if (!("caches" in self) || !window.isSecureContext) {
   unsupported("It needs Cache Storage, which requires a secure context. Open this page over https or from localhost.");
 } else {
-  startWorker();
+  const since = Date.now() - Number(storage.get());
+  const crashed = storage.get() !== null && since >= 0 && since < CRASH_WINDOW_MS;
+  storage.clear();
+  if (crashed || constrainedDevice()) {
+    showMobileWarning(crashed);
+  } else {
+    startWorker();
+  }
 }

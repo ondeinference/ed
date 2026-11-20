@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the wasm package into www/pkg. Serve www/ with any static server:
 #   python3 -m http.server -d www 8080
-# Extra arguments go to `cargo`, e.g. a local onde while it is unreleased:
+# Extra arguments go to `cargo`, e.g. a local onde checkout:
 #   ./build.sh --config 'patch.crates-io.onde.path="../../../onde"'
 set -euo pipefail
 cd "$(dirname "$0")"
