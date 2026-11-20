@@ -128,8 +128,14 @@ jobs:
       # ask the registry about every crate in the plan and fail if any is absent.
       # After a failure, re-run through workflow_dispatch: the plan then holds
       # only the missing crates and the auth step issues a fresh token.
+      #
+      # always() so this still runs when publish exits nonzero partway through
+      # (the --locked failure, or a mid-run token expiry), which is the
+      # partial-publish case this check exists to catch. A custom `if`
+      # otherwise implies success() and skips the step there. Gate on plan
+      # succeeding too: a failed plan leaves count empty, which is != '0'.
       - name: Verify every planned crate reached crates.io
-        if: steps.plan.outputs.count != '0'
+        if: always() && steps.plan.outcome == 'success' && steps.plan.outputs.count != '0'
         run: |
           python3 - <<'PY' > planned.txt
           import json
