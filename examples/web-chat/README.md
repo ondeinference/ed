@@ -16,8 +16,8 @@ python3 -m http.server -d www 8080
 Open <http://localhost:8080>. No bundler, npm or special headers are needed.
 Cache Storage needs a secure context, which `localhost` counts as.
 
-The browser engine lives in `onde` 1.5.0. Until it is released, build against
-a local checkout:
+The browser engine comes from `onde` 1.5.0 on crates.io. To try a local `onde`
+checkout instead, pass a patch through to cargo:
 
 ```bash
 ./build.sh --config 'patch.crates-io.onde.path="../../../onde"'
@@ -30,7 +30,7 @@ smbCloud (app `ondewebdemo`, in the Onde Inference project). It needs the `smb`
 CLI 1.1.0 or newer and a prior `smb login`.
 
 ```bash
-./build.sh --config 'patch.crates-io.onde.path="../../../onde"'
+./build.sh
 ./deploy.sh --dry-run   # lists the files, uploads nothing
 ./deploy.sh             # publishes, then waits for /version.txt to match
 ```
