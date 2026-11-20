@@ -122,6 +122,34 @@ jobs:
             --locked \
             --publish-interval 15 \
             --token "$TOKEN"
+      # cargo-workspaces 0.4.2 logs "published" and exits 0 even when crates.io
+      # rejects an upload. In v1.5.0 the trusted-publishing token expired partway
+      # through and the last four crates got a 403, yet this job went green. So
+      # ask the registry about every crate in the plan and fail if any is absent.
+      # After a failure, re-run through workflow_dispatch: the plan then holds
+      # only the missing crates and the auth step issues a fresh token.
+      #
+      # always() so this still runs when publish exits nonzero partway through
+      # (the --locked failure, or a mid-run token expiry), which is the
+      # partial-publish case this check exists to catch. A custom `if`
+      # otherwise implies success() and skips the step there. Gate on plan
+      # succeeding too: a failed plan leaves count empty, which is != '0'.
+      - name: Verify every planned crate reached crates.io
+        if: always() && steps.plan.outcome == 'success' && steps.plan.outputs.count != '0'
+        run: |
+          python3 - <<'PY' > planned.txt
+          import json
+          for crate in json.load(open("plan.json")):
+              print(crate["name"], crate["version"])
+          PY
+          missing=0
+          while read -r name version; do
+            python3 scripts/crates-io-published.py "$version" --crate "$name" --wait || missing=1
+          done < planned.txt
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::at least one planned crate is not on crates.io; re-run this workflow with publish=true and the same release_tag"
+            exit 1
+          fi
       - name: Nothing to publish
         if: steps.plan.outputs.count == '0'
         run: echo "Every publishable crate at this version is already on crates.io."

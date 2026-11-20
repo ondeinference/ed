@@ -141,6 +141,11 @@ here — this is the safety net for step 6.
 - Workspace-member dev-deps must be path-only (`foo = { path = "../foo" }`), not
   `foo.workspace = true`. cargo-workspaces strips dev-deps that carry a version,
   which changes `Cargo.lock` and fails the `--locked` publish (ed-claude 1.4.0).
+- The trusted-publishing token is short-lived. In v1.5.0 it expired after four
+  of the eight crates and the rest got `403 Invalid authentication token`, but
+  cargo-workspaces 0.4.2 still exited 0. A final step now checks every planned
+  crate against the crates.io index and fails the job if one is missing. Fix a
+  failed run by dispatching the workflow again on the same tag (see below).
 
 ### `release-sdk-swift.yml` → XCFramework + `ed-swift`
 
